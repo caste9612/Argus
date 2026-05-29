@@ -1,0 +1,26 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local config / secrets
+.env
+.env.local
+.env.*.local
+
+# Local capture / debug artifacts
+/captures
+*.etl
+*.pdb
+*.log
