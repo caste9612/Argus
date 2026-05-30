@@ -8,7 +8,7 @@ Profiler GPU-accelerato per Windows. Si attacca a un processo in esecuzione (sen
 
 ## Stato attuale
 
-Progetto in **fase di progettazione**. Solo documentazione, **zero codice**. La prossima sessione di implementazione partirà dalla Fase 1 di [`docs/07-roadmap.md`](docs/07-roadmap.md).
+**Fase 1 (MVP polling) in corso.** Implementato lo scaffold a layer (`capture/`, `aggregation/`, `ui/`, `util/`) con metriche polling-based real-time, dashboard egui, sampler thread lock-free (`arc-swap`), error handling `ArgusError` e logging `tracing`. Da fare in Fase 1: test integration con binario fixture. Poi Fase 2 (ETW + flame graph). Vedi [`docs/07-roadmap.md`](docs/07-roadmap.md).
 
 ## Documenti da leggere prima di toccare codice
 

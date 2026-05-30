@@ -2,7 +2,7 @@
 
 Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of done**.
 
-## Fase 0 — Foundation (in corso)
+## Fase 0 — Foundation ✅ completata
 
 **Obiettivo**: documentazione completa, repository inizializzato, baseline pronta per implementazione.
 
@@ -11,15 +11,19 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 - ✅ `CLAUDE.md` per sessioni Claude Code
 - ✅ Documenti in `docs/` (01-08)
 - ✅ Repository git inizializzato
-- ⏳ Repo GitHub pubblico (o privato) con primo commit
+- ✅ Repo GitHub con primo commit (github.com/caste9612/Argus)
 
 **DoD**: l'utente può clonare il repo e capire dove iniziare. Una nuova sessione di Claude Code può leggere `CLAUDE.md` + `docs/` e iniziare la Fase 1 senza altra context.
 
 ---
 
-## Fase 1 — MVP polling (~1-2 settimane)
+## Fase 1 — MVP polling (in corso)
 
 **Obiettivo**: attaccarsi a un processo Win64 e visualizzare le metriche polling-based in real-time.
+
+**Stato**: scaffold a layer, attach/detach, sampler 10 Hz lock-free, tutte le 7
+metriche, dashboard egui, logging e error handling **fatti e funzionanti**.
+Resta da fare: test integration con binario fixture deterministico.
 
 **Deliverable**:
 - Setup progetto Rust (`Cargo.toml`, layout moduli da `02-architecture.md`)

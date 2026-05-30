@@ -30,7 +30,7 @@
 ## Perché wgpu (e non DirectX 12 diretto)
 
 - API moderna, ergonomica, mentale-simile a Vulkan/Metal
-- Cross-API: DX12 su Windows ma il codice è portabile se mai volessimo Linux/Mac
+- Cross-API: su Windows wgpu **auto-seleziona** il backend (Vulkan se il driver lo offre, altrimenti DX12/GL). Lasciare la scelta a wgpu è più affidabile che forzarne uno: su GPU molto recenti forzare DX12-only ha fatto fallire la creazione della surface. Il codice resta portabile se mai volessimo Linux/Mac
 - Battle-tested in Firefox e WebGPU
 - Eccezionale per data viz: compute shader semplici, vertex/fragment chiari
 - Integrato bene con eframe: rendering UI + custom rendering nello stesso frame via `egui::PaintCallback`

@@ -3,7 +3,7 @@
 **Profiler portatile GPU-accelerato per Windows.**
 Vedi cosa fa davvero il tuo software, senza rallentarlo.
 
-> 🚧 **Stato:** in fase di progettazione. Nessun codice ancora — la prima implementazione partirà dalla Fase 1 della [roadmap](docs/07-roadmap.md), guidata dai documenti in `docs/`.
+> 🚧 **Stato:** Fase 1 (MVP polling) in corso. Funzionano già: lista processi, attach/detach, e metriche real-time (CPU, memoria, I/O, thread, handle) con dashboard GPU. Vedi la [roadmap](docs/07-roadmap.md).
 
 ## Cos'è
 
@@ -21,7 +21,13 @@ Sviluppatori (Rust / C++ / .NET / Go / …) che vogliono capire cosa sta facendo
 
 ## Quick start
 
-Non ancora implementato. La struttura attuale è solo documentazione: vedi la [roadmap](docs/07-roadmap.md) per il piano di sviluppo per fasi.
+```powershell
+cargo run --release
+```
+
+Si apre la dashboard: seleziona un processo nella lista a sinistra e fai doppio
+click (o «Collega») per vedere le sue metriche in tempo reale. Per i processi di
+sistema o con privilegi elevati, lancia Argus come amministratore.
 
 ## Documentazione
 
@@ -42,7 +48,7 @@ Sviluppatori (umani e AI) che collaborano su Argus devono leggere **`CLAUDE.md`*
 
 - **Rust** 1.92+ — no GC, no runtime, binary singolo
 - **windows-rs** — API Win32 native
-- **wgpu** — rendering GPU moderno (DirectX 12 backend su Windows)
+- **wgpu** — rendering GPU moderno (backend auto-selezionato: Vulkan/DX12 su Windows)
 - **egui / eframe** — UI immediate-mode
 - **ETW** — Event Tracing for Windows per cattura kernel-level (Fase 2+)
 

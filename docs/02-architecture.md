@@ -26,6 +26,13 @@ Il dato fluisce dal basso verso l'alto: il processo target è osservato dal **Ca
 
 ## Threading model
 
+> **Stato Fase 1**: il modello a 3 thread descritto sotto è il target finale. In
+> Fase 1 il sampler produce già valori scalari, quindi sampler e aggregator sono
+> **un unico thread**; l'aggregator dedicato entrerà con gli eventi ETW ad alta
+> frequenza in Fase 2. Inoltre il conteggio thread è campionato a **1 Hz** (con
+> carry-forward sulle storie a 10 Hz) per evitare uno snapshot Toolhelp ad ogni
+> tick — un esempio dell'ottimizzazione che Argus stesso vuole insegnare.
+
 Tre thread principali, comunicazione **lock-free dove possibile**:
 
 ### 1. Sampler thread (priority normale)
