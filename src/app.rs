@@ -16,6 +16,9 @@ pub struct ArgusApp {
     cmd_buf: Vec<Command>,
 }
 
+// new() avvia il thread sampler (effetto collaterale): un `Default` implicito
+// che lo facesse di nascosto sarebbe fuorviante, quindi silenziamo il lint.
+#[allow(clippy::new_without_default)]
 impl ArgusApp {
     pub fn new() -> Self {
         let shared = Shared::new();

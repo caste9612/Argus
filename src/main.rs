@@ -1,12 +1,7 @@
 // Niente console nera in release: Argus è un'app GUI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod aggregation;
-mod app;
-mod capture;
-mod ui;
-mod util;
-
+use argus::app::ArgusApp;
 use eframe::egui;
 use tracing::info;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -34,7 +29,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(app::ArgusApp::new()))
+            Ok(Box::new(ArgusApp::new()))
         }),
     )
 }
