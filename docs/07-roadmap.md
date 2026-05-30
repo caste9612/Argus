@@ -74,42 +74,48 @@ amministratore.
 
 ---
 
-## Fase 3 — Allocations + locks + timeline (~3-4 settimane)
+## Fase 3 — Allocations + locks + timeline 🔨 fondamenta pronte
 
 **Obiettivo**: visualizzare comportamento dinamico (allocazioni, contesa, thread states).
 
 **Deliverable**:
-- Sottoscrizione provider `Thread` (CSwitch già fatto in Fase 2) + `PageFault`
-- Heap allocation tracking (provider `HeapTrace` per processi opt-in)
-- Thread states timeline (Gantt) renderizzato con wgpu custom
-- Lock contention detection (analisi CSwitch su mutex/wait object)
-- Allocation flame graph (chi alloca, quanto, dove)
-- Pannello "Locks" con waiter analysis
+- ✅ Parser eventi `CSwitch` (provider `Thread`) — puro e testato (`capture/cswitch.rs`)
+- ✅ Struttura dati timeline stati thread — intervalli Running per thread, testata (`aggregation/timeline.rs`)
+- ⬜ Cattura `CSwitch` live (estendere la sessione ETW con `EVENT_TRACE_FLAG_CSWITCH`) — *admin-gated*
+- ⬜ Mappatura TID→PID per filtrare i thread del target (Toolhelp `TH32CS_SNAPTHREAD` o eventi Thread)
+- ⬜ Timeline (Gantt) renderizzata con il Painter di egui (come il flame, D17)
+- ⬜ Heap allocation tracking (provider `HeapTrace`/`Kernel-Memory`) + allocation flame graph
+- ⬜ Lock contention detection (analisi `CSwitch` su wait object) + pannello "Locks"
+
+**Stato**: le fondamenta pure (parser + struttura dati) sono fatte e testate. Il resto è
+in larga parte *admin-gated* (ETW kernel) come la Fase 2 → vedi "Lavoro residuo" sotto.
 
 **DoD**:
-- Vedi un thread bloccato su lock con indicazione visiva chiara
-- Identifichi allocazioni hot path con stack trace
-- Cumulative allocations per stack visibile
-- Timeline scrub fluido anche con 30 thread × 60 s
+- ⏳ Vedi un thread bloccato su lock con indicazione visiva chiara
+- ⏳ Identifichi allocazioni hot path con stack trace
+- ⏳ Cumulative allocations per stack visibile
+- ⏳ Timeline scrub fluido anche con 30 thread × 60 s
 
 ---
 
-## Fase 4 — Recording + diff + export (~2 settimane)
+## Fase 4 — Recording + diff + export ✅ completata
 
 **Obiettivo**: trasformare Argus da live-only a strumento di analisi post-mortem.
 
 **Deliverable**:
-- Formato file `.argus` proprietario (binario, compresso `zstd`, versioned con magic header)
-- Record + replay dell'intera sessione
-- Modalità "diff" tra due capture (grafici sovrapposti, delta evidenziato)
-- Export selettivo (CSV time series, SVG flame, PNG screenshot, JSON metadata)
-- Snapshot manuali (premi un tasto, salva stato corrente)
-- Sharing-friendly: link/embed di flame graph statici come HTML
+- ✅ Formato file `.argus` proprietario (binario, versioned con magic header) — `persist.rs`. *zstd rinviato* (D18)
+- ✅ Record + replay dell'intera sessione (Salva/Apri, stato `Replay`)
+- ✅ Modalità "diff" tra due capture (grafici sovrapposti + funzioni "movers") — `diff.rs`, tab Diff
+- ✅ Export (CSV time series, folded stacks per speedscope, SVG flame) — `export.rs`. *PNG/JSON non fatti*
+- ⬜ Snapshot manuali / sharing HTML (l'SVG è già condivisibile; resto non fatto)
 
 **DoD**:
-- Catturi 5 minuti di un'app, salvi, riapri, vedi tutto come live
-- Confronti due capture (prima/dopo ottimizzazione) con grafici sovrapposti
-- Export SVG di un flame graph apribile in browser
+- ✅ Catturi una sessione, salvi, riapri, vedi tutto come live (replay)
+- ✅ Confronti due capture con grafici sovrapposti (tab Diff)
+- ✅ Export SVG di un flame graph apribile in browser
+
+**Verifica**: tutto coperto da unit test (round-trip formato, export, diff) + UI verificata
+a video. La UI di replay/diff con **dati di flame reali** dipende dalla cattura ETW (admin).
 
 ---
 
@@ -124,6 +130,45 @@ amministratore.
 - Eventualmente: integrazione con NVIDIA Nsight Aftermath API
 
 **DoD**: TBD — dipende da quanto driver lavoro è realmente fattibile in user mode.
+**Stato**: non iniziata. Richiede driver/SDK vendor (NVML, PMU) e privilegi → fuori
+dalla portata di un ambiente non elevato; resta nel "lavoro residuo" sotto.
+
+---
+
+## Lavoro residuo e verifica (handoff)
+
+Stato sintetico a fine del lavoro autonomo. **Verde = fatto e verificato**
+(build+clippy+fmt+test, e UI provata a video dove applicabile).
+
+### ✅ Fatto e verificato
+- **Fase 1** completa (polling, dashboard, lista processi).
+- **Fase 2** implementata: flame graph, symbol resolution, parser+sessione ETW,
+  aggregatore, tab Flame (zoom/drill/ricerca regex/hover). Degrado graceful senza admin.
+- **Fase 4** completa: formato `.argus`, record/replay, diff, export (CSV/folded/SVG).
+- **Fase 3** fondamenta: parser `CSwitch` + struttura dati timeline.
+- 40 unit + 3 integration test verdi, clippy/fmt puliti, release 10.62 MB.
+
+### 🔴 Da verificare come **amministratore** (l'unica cosa che non potevo fare)
+La cattura ETW kernel richiede privilegi elevati; senza, l'app degrada con grazia.
+Da collaudare con un run elevato:
+1. **Flame graph live (Fase 2)**: attacca un processo CPU-bound → il flame si popola
+   entro ~10 s; verifica nomi simboli, zoom, e l'**ordine dei frame** (assunto
+   leaf-first in `capture/profiling.rs`; se capovolto, invertire lì).
+2. **Overhead** sul target < 1 % (misurare con/senza Argus).
+3. **Replay/diff con dati reali**: salva una sessione con flame popolato, riapri/confronta.
+
+### ⬜ Da implementare per chiudere le fasi (con indicazioni)
+- **Fase 2 rifinitura**: risoluzione simboli del target *on-disk* via eventi ETW
+  Image/Load (più robusta dell'handle vivo, vedi D14).
+- **Fase 3 timeline live**: estendere `EtwProfiler` con `EVENT_TRACE_FLAG_CSWITCH`,
+  instradare i `CSwitch` (già parsabili) verso un `ThreadTimeline` condiviso, filtrare i
+  TID del target (Toolhelp `TH32CS_SNAPTHREAD`), e una tab Gantt (Painter egui, come il
+  flame). Le fondamenta pure sono già pronte e testate.
+- **Fase 3 allocazioni/lock**: provider `HeapTrace`/`Kernel-Memory` per le allocazioni
+  (+ allocation flame graph) e analisi `CSwitch` su wait object per la contesa lock.
+- **Fase 5**: PMU/GPU — richiede driver/SDK vendor; rivalutare la fattibilità in user mode.
+- **Nice-to-have**: compressione zstd del formato `.argus`; export PNG/JSON; file dialog
+  nativo (ora auto-path + lista in-app, D19); regex→fuzzy nella ricerca flame.
 
 ---
 

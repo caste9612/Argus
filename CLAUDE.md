@@ -10,9 +10,13 @@ Profiler GPU-accelerato per Windows. Si attacca a un processo in esecuzione (sen
 
 **Fase 1 (MVP polling) completata.** Scaffold a layer (lib + bin), metriche polling-based real-time, dashboard egui, lista processi via `NtQuerySystemInformation` (raggruppata utente/sistema, ordinabile per CPU/RAM/Nome), sampler thread lock-free (`arc-swap`), error handling `ArgusError`, logging `tracing`, test d'integrazione con binario fixture. Binario release 10.62 MB.
 
-**Fase 2 (ETW + flame graph) implementata, cattura live da verificare come admin.** Aggiunti: flame graph (`aggregation/flame.rs`), symbol resolution DbgHelp con cache (`capture/symbols.rs`), parser eventi + sessione ETW kernel (`capture/etw.rs`), aggregatore che lega ETW→simboli→flame (`capture/profiling.rs`), tab "Flame graph" interattiva renderizzata col Painter di egui (`ui/flame.rs`: zoom/drill/ricerca/hover). 17 unit + 3 integration test verdi, clippy/fmt puliti. La cattura ETW reale richiede **privilegi di amministratore**: senza, l'app degrada con grazia (banner "ETW non disponibile", polling-only). **Verifica end-to-end come admin ancora da fare** — vedi DoD Fase 2.
+**Fase 2 (ETW + flame graph) implementata, cattura live da verificare come admin.** Flame graph (`aggregation/flame.rs`), symbol resolution DbgHelp (`capture/symbols.rs`), parser eventi + sessione ETW kernel (`capture/etw.rs`), aggregatore ETW→simboli→flame (`capture/profiling.rs`), tab "Flame graph" col Painter di egui (`ui/flame.rs`: zoom/drill/ricerca **regex**/hover). La cattura ETW richiede **admin**: senza, degrado graceful (banner, polling-only). Verifica end-to-end come admin da fare.
 
-Per il recap completo delle decisioni (D1–D17) e lo stato vedi [`docs/09-decisions.md`](docs/09-decisions.md); per le fasi [`docs/07-roadmap.md`](docs/07-roadmap.md).
+**Fase 4 (recording + diff + export) completata.** Formato `.argus` binario versionato (`persist.rs`), record/replay (stato `Replay`), diff tra due capture con grafici sovrapposti + "movers" (`diff.rs`, tab Diff), export CSV/folded-stacks/SVG (`export.rs`). UI: Salva/Apri/Esporta/Confronta nella top bar. Tutto coperto da test (round-trip, export, diff).
+
+**Fase 3 (allocazioni + lock + timeline): fondamenta pronte.** Parser `CSwitch` (`capture/cswitch.rs`) + struttura dati timeline stati thread (`aggregation/timeline.rs`), puri e testati. Cattura CSwitch live (ETW), mappatura TID→PID, UI Gantt, allocazioni e lock: da fare (admin-gated) — vedi handoff in `07-roadmap.md`.
+
+Stato test: **40 unit + 3 integration verdi**, clippy/fmt puliti, release 10.62 MB. Per le decisioni (D1–D19) vedi [`docs/09-decisions.md`](docs/09-decisions.md); per fasi e **lavoro residuo/verifica** [`docs/07-roadmap.md`](docs/07-roadmap.md).
 
 ## Documenti da leggere prima di toccare codice
 

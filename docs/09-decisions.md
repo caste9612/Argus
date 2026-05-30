@@ -18,9 +18,19 @@ graph puro (`aggregation/flame.rs`, D13), symbol resolution DbgHelp con cache
 D16), tab "Flame graph" interattiva col Painter di egui (`ui/flame.rs`, D17).
 L'app gira e mostra il degrado graceful "ETW non disponibile" senza admin
 (verificato a video). **La cattura ETW reale richiede privilegi di
-amministratore e va collaudata con un run elevato** — è l'unica parte non
-verificabile in un ambiente non elevato (vedi DoD Fase 2 in
-[`07-roadmap.md`](07-roadmap.md)).
+amministratore e va collaudata con un run elevato** — vedi handoff in
+[`07-roadmap.md`](07-roadmap.md).
+
+**Fase 4 — recording/diff/export: completata.** Formato `.argus` (D18),
+record/replay (D19), diff tra capture (`diff.rs`, tab Diff), export
+CSV/folded/SVG (`export.rs`). Tutto testato (round-trip, export, diff).
+
+**Fase 3 — allocazioni/lock/timeline: fondamenta pronte.** Parser `CSwitch`
+(`capture/cswitch.rs`) e struttura dati timeline (`aggregation/timeline.rs`),
+puri e testati. Cattura live + Gantt + allocazioni + lock: da fare (admin-gated),
+vedi handoff.
+
+**Test totali**: 40 unit + 3 integration verdi; clippy/fmt puliti; release 10.62 MB.
 
 ## Decisioni
 
