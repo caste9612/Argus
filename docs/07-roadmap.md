@@ -147,14 +147,16 @@ Stato sintetico a fine del lavoro autonomo. **Verde = fatto e verificato**
 - **Fase 3** fondamenta: parser `CSwitch` + struttura dati timeline.
 - 40 unit + 3 integration test verdi, clippy/fmt puliti, release 10.62 MB.
 
-### ✅ Cattura ETW live — VERIFICATA come amministratore
+### ✅ Cattura ETW live — VERIFICATA come amministratore (pipeline + GUI)
 Con il fix del privilegio (D20) la pipeline ETW è stata collaudata end-to-end con un run
 elevato (`tests/etw_live.rs`, ri-eseguibile: `cargo test --test etw_live -- --ignored`):
-7690 stack reali dal fixture, tutti del target, ordine leaf-first confermato → flame
-orientato bene. Resta da provare **a video** la resa del flame nella GUI con un processo
-reale (apri la tab Flame come admin) e da **misurare l'overhead** (< 1 %). I **nomi
-funzione del target** richiedono ancora l'approccio on-disk (D14): ora si vede
-`modulo!0xADDR`.
+7690 stack reali dal fixture, tutti del target, ordine leaf-first confermato. **Resa a
+video confermata**: lanciando Argus elevato con `--attach <pid>` su un fixture CPU-bound,
+la tab Flame mostra il flame graph reale, orientato bene (`ntdll!RtlUserThreadStart` alla
+base, foglie in cima), con "cattura ETW attiva". Restano: **misura overhead** (< 1 %) e i
+**nomi funzione del target** (ora `modulo!0xADDR`; servirebbe l'approccio on-disk, D14).
+
+Comodità aggiunta: `argus.exe --attach <pid>` si collega subito e apre la tab Flame.
 
 ### ⬜ Da implementare per chiudere le fasi (con indicazioni)
 - **Fase 2 rifinitura**: risoluzione simboli del target *on-disk* via eventi ETW

@@ -14,13 +14,14 @@ pub struct ArgusApp {
     join: Option<JoinHandle<()>>,
     ui: ui::State,
     cmd_buf: Vec<Command>,
+    /// PID da collegare automaticamente al primo frame (opzione `--attach`).
+    pending_attach: Option<u32>,
 }
 
-// new() avvia il thread sampler (effetto collaterale): un `Default` implicito
-// che lo facesse di nascosto sarebbe fuorviante, quindi silenziamo il lint.
-#[allow(clippy::new_without_default)]
 impl ArgusApp {
-    pub fn new() -> Self {
+    /// Crea l'app e avvia il thread sampler. `initial_pid` (da `--attach <pid>`)
+    /// viene collegato automaticamente al primo frame, aprendo la tab Flame.
+    pub fn new(initial_pid: Option<u32>) -> Self {
         let shared = Shared::new();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<Command>();
 
@@ -36,12 +37,19 @@ impl ArgusApp {
             join: Some(join),
             ui: ui::State::default(),
             cmd_buf: Vec::new(),
+            pending_attach: initial_pid,
         }
     }
 }
 
 impl eframe::App for ArgusApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Auto-attach da riga di comando (una sola volta), aprendo la tab Flame.
+        if let Some(pid) = self.pending_attach.take() {
+            let _ = self.cmd_tx.send(Command::Attach(pid));
+            self.ui.tab = ui::Tab::Flame;
+        }
+
         // Snapshot immutabili: letti senza mai bloccare il sampler.
         let snap = self.shared.metrics.load_full();
         let procs = self.shared.processes.load_full();

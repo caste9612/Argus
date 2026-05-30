@@ -24,12 +24,23 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
+    // `--attach <pid>`: si collega subito al processo indicato e apre la tab Flame.
+    let args: Vec<String> = std::env::args().collect();
+    let initial_pid = args
+        .iter()
+        .position(|a| a == "--attach")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<u32>().ok());
+    if let Some(pid) = initial_pid {
+        info!("auto-attach da riga di comando: PID {pid}");
+    }
+
     eframe::run_native(
         "Argus",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(ArgusApp::new()))
+            Ok(Box::new(ArgusApp::new(initial_pid)))
         }),
     )
 }
