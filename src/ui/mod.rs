@@ -13,11 +13,23 @@ use crate::capture::process::ProcessInfo;
 use crate::capture::sampler::Command;
 use eframe::egui;
 
+/// Criterio di ordinamento secondario della lista processi (il raggruppamento
+/// "utente prima" è sempre primario).
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    #[default]
+    Cpu,
+    Mem,
+    Name,
+}
+
 /// Stato transitorio della UI (non condiviso col sampler).
 #[derive(Default)]
 pub struct State {
     pub search: String,
     pub selected_pid: Option<u32>,
+    pub sort_key: SortKey,
+    pub hide_system: bool,
 }
 
 /// Disegna l'intera UI per un frame. I comandi da eseguire vengono accodati in

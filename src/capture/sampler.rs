@@ -7,6 +7,7 @@ use crate::util::error::ArgusError;
 use crate::util::win::{filetime_to_u64, logical_cpu_count};
 use arc_swap::ArcSwap;
 use crossbeam_channel::{Receiver, RecvTimeoutError};
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,6 +61,11 @@ struct Sampler {
 
     // Conteggio thread campionato a 1 Hz, riportato (carry-forward) a 10 Hz.
     thread_cache: u32,
+
+    // Per il CPU% per-processo della lista: tempo CPU cumulativo dell'ultimo
+    // refresh, per PID, + istante di quel refresh.
+    prev_cpu: HashMap<u32, u64>,
+    last_proc_refresh: Instant,
 }
 
 impl Sampler {
@@ -80,6 +86,8 @@ impl Sampler {
             last_io_write: 0,
             last_sample: Instant::now(),
             thread_cache: 0,
+            prev_cpu: HashMap::new(),
+            last_proc_refresh: Instant::now(),
         }
     }
 
@@ -159,7 +167,22 @@ impl Sampler {
     /// target. Un solo snapshot Toolhelp al secondo: overhead trascurabile.
     fn refresh_processes(&mut self) {
         match list_processes() {
-            Ok(list) => {
+            Ok(mut list) => {
+                // CPU% per processo = delta del tempo CPU cumulativo dall'ultimo
+                // refresh, normalizzato sull'intervallo e sui core logici.
+                let now = Instant::now();
+                let dt = now.duration_since(self.last_proc_refresh).as_secs_f32().max(0.001);
+                let ncpu = self.snap.num_cpus as f32;
+                for p in &mut list {
+                    if let Some(&prev) = self.prev_cpu.get(&p.pid) {
+                        let delta = p.cpu_total_100ns.saturating_sub(prev);
+                        let pct = ((delta as f32 / 1e7) / dt) * 100.0 / ncpu;
+                        p.cpu_percent = pct.clamp(0.0, 100.0);
+                    }
+                }
+                self.prev_cpu = list.iter().map(|p| (p.pid, p.cpu_total_100ns)).collect();
+                self.last_proc_refresh = now;
+
                 let arc = Arc::new(list);
                 self.shared.processes.store(arc.clone());
                 self.last_list = arc;
