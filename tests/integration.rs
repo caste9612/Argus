@@ -60,12 +60,18 @@ fn enumerates_and_measures_a_known_workload() {
 fn finds_self_and_handles_bad_pid_gracefully() {
     let me = std::process::id();
     let list = list_processes().expect("enumerazione");
-    assert!(find(&list, me).is_some(), "il processo di test deve essere in lista");
+    assert!(
+        find(&list, me).is_some(),
+        "il processo di test deve essere in lista"
+    );
 
     // Aprire un PID quasi-certamente inesistente deve dare un errore controllato,
     // mai un panic (no-panic policy, docs/06-reliability.md).
     let r = open_process(0xFFFF_FFF0);
-    assert!(r.is_err(), "PID inesistente deve restituire Err, non panicare");
+    assert!(
+        r.is_err(),
+        "PID inesistente deve restituire Err, non panicare"
+    );
 }
 
 #[test]

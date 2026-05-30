@@ -2,7 +2,9 @@
 //! `Snapshot` immutabili via `ArcSwap`. Riceve comandi dalla UI via canale.
 
 use crate::aggregation::{ProcessMeta, Snapshot, Status};
-use crate::capture::process::{image_name, list_processes, open_process, ProcessHandle, ProcessInfo};
+use crate::capture::process::{
+    image_name, list_processes, open_process, ProcessHandle, ProcessInfo,
+};
 use crate::util::error::ArgusError;
 use crate::util::win::{filetime_to_u64, logical_cpu_count};
 use arc_swap::ArcSwap;
@@ -99,7 +101,10 @@ impl Sampler {
         match cmd {
             Command::Attach(pid) => self.attach(pid),
             Command::Detach => {
-                info!("detach dal PID {:?}", self.snap.attached.as_ref().map(|m| m.pid));
+                info!(
+                    "detach dal PID {:?}",
+                    self.snap.attached.as_ref().map(|m| m.pid)
+                );
                 self.handle = None;
                 self.snap.attached = None;
                 self.snap.status = Status::NotAttached;
@@ -135,7 +140,10 @@ impl Sampler {
                 self.handle = Some(h);
                 self.snap.reset_series();
                 self.reset_baselines();
-                self.snap.attached = Some(ProcessMeta { pid, name: name.clone() });
+                self.snap.attached = Some(ProcessMeta {
+                    pid,
+                    name: name.clone(),
+                });
                 self.snap.status = Status::Running;
                 info!("collegato a {name} (PID {pid})");
             }
@@ -171,7 +179,10 @@ impl Sampler {
                 // CPU% per processo = delta del tempo CPU cumulativo dall'ultimo
                 // refresh, normalizzato sull'intervallo e sui core logici.
                 let now = Instant::now();
-                let dt = now.duration_since(self.last_proc_refresh).as_secs_f32().max(0.001);
+                let dt = now
+                    .duration_since(self.last_proc_refresh)
+                    .as_secs_f32()
+                    .max(0.001);
                 let ncpu = self.snap.num_cpus as f32;
                 for p in &mut list {
                     if let Some(&prev) = self.prev_cpu.get(&p.pid) {
@@ -226,7 +237,10 @@ impl Sampler {
 
     fn sample_once(&mut self, h: &ProcessHandle) -> Result<(), ArgusError> {
         let now = Instant::now();
-        let dt = now.duration_since(self.last_sample).as_secs_f32().max(0.001);
+        let dt = now
+            .duration_since(self.last_sample)
+            .as_secs_f32()
+            .max(0.001);
         let handle = h.raw();
 
         // SAFETY: handle valido per tutta la durata di queste query read-only.

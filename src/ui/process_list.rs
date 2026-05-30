@@ -78,7 +78,10 @@ pub fn render(
             ui.separator();
             ui.horizontal(|ui| {
                 let enabled = state.selected_pid.is_some();
-                if ui.add_enabled(enabled, egui::Button::new("Collega")).clicked() {
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Collega"))
+                    .clicked()
+                {
                     if let Some(pid) = state.selected_pid {
                         out.push(Command::Attach(pid));
                     }
@@ -91,7 +94,10 @@ pub fn render(
 
 fn row(ui: &mut egui::Ui, state: &mut State, p: &ProcessInfo, out: &mut Vec<Command>) {
     let selected = state.selected_pid == Some(p.pid);
-    let text = format!("{}   ·   {:.0}%   ·   {:.0} MB", p.name, p.cpu_percent, p.working_set_mb);
+    let text = format!(
+        "{}   ·   {:.0}%   ·   {:.0} MB",
+        p.name, p.cpu_percent, p.working_set_mb
+    );
     // I processi di sistema sono attenuati per dare risalto a quelli dell'utente.
     let rich = if p.is_user {
         egui::RichText::new(text)
