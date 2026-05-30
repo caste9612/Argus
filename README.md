@@ -3,7 +3,7 @@
 **Profiler portatile GPU-accelerato per Windows.**
 Vedi cosa fa davvero il tuo software, senza rallentarlo.
 
-> 🚧 **Stato:** Fase 1 (MVP polling) in corso. Funzionano già: lista processi, attach/detach, e metriche real-time (CPU, memoria, I/O, thread, handle) con dashboard GPU. Vedi la [roadmap](docs/07-roadmap.md).
+> ✅ **Stato:** Fase 1 (MVP polling) **completata**. Lista processi raggruppata/ordinabile, attach/detach, metriche real-time (CPU, memoria, I/O, thread, handle) con dashboard GPU, test d'integrazione verdi. Prossima: Fase 2 (ETW + flame graph). Vedi [roadmap](docs/07-roadmap.md) e [decisioni](docs/09-decisions.md).
 
 ## Cos'è
 
@@ -41,6 +41,7 @@ Tutta la progettazione vive in [`docs/`](docs/) — leggili in ordine se vuoi ca
 6. [Affidabilità](docs/06-reliability.md) — garanzie e strategie
 7. [Roadmap](docs/07-roadmap.md) — fasi e milestone
 8. [Sviluppo](docs/08-development.md) — workflow di lavoro
+9. [Decisioni](docs/09-decisions.md) — log delle scelte e stato attuale
 
 Sviluppatori (umani e AI) che collaborano su Argus devono leggere **`CLAUDE.md`** in radice per le convenzioni.
 

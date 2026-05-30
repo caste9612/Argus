@@ -54,45 +54,50 @@ Tre thread principali, comunicazione **lock-free dove possibile**:
 
 ## Moduli
 
-**Decisione provvisoria**: singolo crate, multi-module. Workspace solo se la complessità lo giustifica (improbabile prima della Fase 3).
+**Decisione**: singolo crate con **lib + bin** — la logica vive nel lib (moduli pubblici), `main.rs` è un wrapper sottile, così i test d'integrazione in `tests/` la usano come `argus::…`. Workspace solo se la complessità lo giustifica (improbabile prima della Fase 3). Vedi `09-decisions.md` D12.
 
-Struttura prevista:
+Struttura (attuale + pianificata):
 
 ```
 src/
-├── main.rs              # entry point, eframe setup
-├── app.rs               # state machine principale
+├── main.rs              # bin: entry sottile (logging + finestra)
+├── lib.rs               # espone i moduli per i test (argus::…)
+├── app.rs               # wiring: arc-swap + thread sampler + ciclo eframe
 │
-├── capture/             # LAYER 2
+├── capture/             # LAYER 2 — osservazione del target
 │   ├── mod.rs
-│   ├── polling.rs       # GetProcessTimes, GetProcessMemoryInfo...
-│   ├── etw.rs           # ETW session, providers, parsing eventi (Fase 2)
-│   ├── symbols.rs       # DbgHelp wrapper, simboli PDB
-│   └── process.rs       # OpenProcess, attach/detach, ToolHelp
+│   ├── process.rs       # enum via NtQuerySystemInformation, attach/detach
+│   ├── sampler.rs       # thread 10 Hz, comandi, pubblicazione Snapshot
+│   ├── polling.rs       # (Fase 2) lettura metriche per-handle riusabile
+│   ├── etw.rs           # (Fase 2) ETW session, provider, parsing eventi
+│   └── symbols.rs       # (Fase 2) DbgHelp wrapper, simboli PDB
 │
-├── aggregation/         # LAYER 3
-│   ├── mod.rs
-│   ├── timeseries.rs    # ring buffer con storia
-│   ├── flame.rs         # stack samples → flame graph (Fase 2)
-│   └── delta.rs         # rate calculations
+├── aggregation/         # LAYER 3 — stato time-series
+│   ├── mod.rs           # Snapshot, storie, Status
+│   └── flame.rs         # (Fase 2) stack samples -> flame graph
 │
-├── viz/                 # LAYER 4
-│   ├── mod.rs
-│   ├── line_chart.rs    # wgpu pipeline per time series
-│   ├── flame_view.rs    # wgpu pipeline per flame graph
-│   └── heatmap.rs       # wgpu pipeline per heat map
+├── viz/                 # LAYER 4 — (Fase 2) pipeline wgpu custom
+│   └── …                # flame view, heatmap
 │
-├── ui/                  # LAYER 5
-│   ├── mod.rs
-│   ├── dashboard.rs     # layout principale
-│   ├── process_list.rs  # picker processi
-│   ├── kpi.rs           # KPI cards
-│   └── widgets/         # componenti riusabili
+├── ui/                  # LAYER 5 — egui
+│   ├── mod.rs           # State, render, top bar
+│   ├── dashboard.rs     # KPI + grafici time-series
+│   ├── process_list.rs  # picker (raggruppato, ordinabile)
+│   └── kpi.rs           # card + grafici (egui_plot)
 │
 └── util/                # helper trasversali
     ├── error.rs         # ArgusError
-    └── win.rs           # wrapper Win32 sicuri (RAII)
+    └── win.rs           # wrapper Win32 (RAII), SeDebugPrivilege
+
+src/bin/fixture.rs       # carico deterministico per i test
+tests/integration.rs     # test end-to-end del capture contro il fixture
 ```
+
+> **Stato implementazione**: esistono `main.rs`, `lib.rs`, `app.rs`,
+> `capture/{process,sampler}.rs`, `aggregation/mod.rs`,
+> `ui/{mod,dashboard,process_list,kpi}.rs`, `util/{error,win}.rs`, più
+> `src/bin/fixture.rs` e `tests/integration.rs`. I file marcati *(Fase 2)* e
+> l'intero `viz/` non sono ancora creati.
 
 ## Flusso dati: vita di una metrica CPU (Fase 1)
 

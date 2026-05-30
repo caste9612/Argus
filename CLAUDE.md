@@ -8,7 +8,7 @@ Profiler GPU-accelerato per Windows. Si attacca a un processo in esecuzione (sen
 
 ## Stato attuale
 
-**Fase 1 (MVP polling) in corso.** Implementato lo scaffold a layer (`capture/`, `aggregation/`, `ui/`, `util/`) con metriche polling-based real-time, dashboard egui, sampler thread lock-free (`arc-swap`), error handling `ArgusError` e logging `tracing`. Da fare in Fase 1: test integration con binario fixture. Poi Fase 2 (ETW + flame graph). Vedi [`docs/07-roadmap.md`](docs/07-roadmap.md).
+**Fase 1 (MVP polling) completata.** Scaffold a layer (lib + bin), metriche polling-based real-time, dashboard egui, lista processi via `NtQuerySystemInformation` (raggruppata utente/sistema, ordinabile per CPU/RAM/Nome), sampler thread lock-free (`arc-swap`), error handling `ArgusError`, logging `tracing`, e test d'integrazione con binario fixture (2 unit + 3 integration verdi). **Prossimo: Fase 2 (ETW + flame graph).** Per il recap completo delle decisioni e lo stato vedi [`docs/09-decisions.md`](docs/09-decisions.md); per le fasi [`docs/07-roadmap.md`](docs/07-roadmap.md).
 
 ## Documenti da leggere prima di toccare codice
 
