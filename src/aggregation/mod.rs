@@ -34,6 +34,17 @@ pub enum Status {
     Error(String),
 }
 
+/// Stato della cattura ETW per il flame graph (Fase 2).
+#[derive(Clone, PartialEq)]
+pub enum FlameStatus {
+    /// Profiling non attivo (non collegati, o sessione ETW non avviata).
+    Off,
+    /// ETW non disponibile: motivo pronto per l'utente (es. mancano privilegi).
+    Unavailable(String),
+    /// Cattura in corso.
+    Active,
+}
+
 /// Vista immutabile pubblicata dal sampler verso la UI a ~10 Hz.
 ///
 /// Viene clonata ad ogni tick e scambiata atomicamente via `ArcSwap`: la UI
@@ -45,6 +56,8 @@ pub struct Snapshot {
     pub has_debug_privilege: bool,
     pub attached: Option<ProcessMeta>,
     pub status: Status,
+    /// Stato della cattura ETW per il flame graph.
+    pub flame_status: FlameStatus,
 
     // Valori correnti (per le KPI card).
     pub cpu: f32,
@@ -74,6 +87,7 @@ impl Snapshot {
             has_debug_privilege,
             attached: None,
             status: Status::NotAttached,
+            flame_status: FlameStatus::Off,
             cpu: 0.0,
             working_set_mb: 0.0,
             private_mb: 0.0,

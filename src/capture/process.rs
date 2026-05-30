@@ -12,7 +12,9 @@ use windows::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, HANDLE, STATUS_INFO_LENGTH_MISMATCH,
 };
 use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+};
 use windows::Win32::System::WindowsProgramming::SYSTEM_PROCESS_INFORMATION;
 
 /// Riga della lista processi mostrata nel pannello sinistro.
@@ -79,6 +81,23 @@ pub fn open_process(pid: u32) -> Result<ProcessHandle, ArgusError> {
                 ),
             })
         }
+        Err(e) => Err(ArgusError::Os(e)),
+    }
+}
+
+/// Apre il target con i diritti che servono a DbgHelp per caricare i simboli del
+/// processo *vivo* (`PROCESS_QUERY_INFORMATION | PROCESS_VM_READ`).
+///
+/// È best-effort: usato solo per il flame graph (Fase 2). Se fallisce, il
+/// chiamante mostra gli indirizzi grezzi invece dei nomi (graceful degradation).
+pub fn open_for_symbols(pid: u32) -> Result<ProcessHandle, ArgusError> {
+    // SAFETY: l'handle restituito è incapsulato subito in RAII.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) };
+    match handle {
+        Ok(h) if !h.is_invalid() => Ok(ProcessHandle(h)),
+        Ok(_) => Err(ArgusError::Internal(
+            "OpenProcess (symbols) handle nullo".into(),
+        )),
         Err(e) => Err(ArgusError::Os(e)),
     }
 }

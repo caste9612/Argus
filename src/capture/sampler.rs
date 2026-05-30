@@ -1,14 +1,17 @@
 //! Il sampler: thread in background che campiona il target a 10 Hz e pubblica
 //! `Snapshot` immutabili via `ArcSwap`. Riceve comandi dalla UI via canale.
 
-use crate::aggregation::{ProcessMeta, Snapshot, Status};
+use crate::aggregation::flame::FlameGraph;
+use crate::aggregation::{FlameStatus, ProcessMeta, Snapshot, Status};
 use crate::capture::process::{
     image_name, list_processes, open_process, ProcessHandle, ProcessInfo,
 };
+use crate::capture::profiling::ProfilingSession;
 use crate::util::error::ArgusError;
 use crate::util::win::{filetime_to_u64, logical_cpu_count};
 use arc_swap::ArcSwap;
 use crossbeam_channel::{Receiver, RecvTimeoutError};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -37,6 +40,10 @@ pub enum Command {
 pub struct Shared {
     pub metrics: ArcSwap<Snapshot>,
     pub processes: ArcSwap<Vec<ProcessInfo>>,
+    /// Flame graph degli stack sample ETW (Fase 2). Mutex perché è un albero
+    /// mutato di continuo dall'aggregatore e letto dalla UI per il rendering;
+    /// le sezioni critiche sono brevissime (add_stack / layout). Vedi D16.
+    pub flame: Arc<Mutex<FlameGraph>>,
 }
 
 impl Shared {
@@ -45,6 +52,7 @@ impl Shared {
         Arc::new(Self {
             metrics: ArcSwap::from_pointee(Snapshot::new(num_cpus, false)),
             processes: ArcSwap::from_pointee(Vec::new()),
+            flame: Arc::new(Mutex::new(FlameGraph::new())),
         })
     }
 }
@@ -68,6 +76,10 @@ struct Sampler {
     // refresh, per PID, + istante di quel refresh.
     prev_cpu: HashMap<u32, u64>,
     last_proc_refresh: Instant,
+
+    // Sessione di profiling ETW (flame graph), viva quando si è collegati e la
+    // cattura è partita. None se non avviata (es. mancano privilegi admin).
+    profiling: Option<ProfilingSession>,
 }
 
 impl Sampler {
@@ -90,6 +102,7 @@ impl Sampler {
             thread_cache: 0,
             prev_cpu: HashMap::new(),
             last_proc_refresh: Instant::now(),
+            profiling: None,
         }
     }
 
@@ -105,6 +118,7 @@ impl Sampler {
                     "detach dal PID {:?}",
                     self.snap.attached.as_ref().map(|m| m.pid)
                 );
+                self.stop_profiling(true);
                 self.handle = None;
                 self.snap.attached = None;
                 self.snap.status = Status::NotAttached;
@@ -121,6 +135,8 @@ impl Sampler {
     }
 
     fn attach(&mut self, pid: u32) {
+        // Stato pulito: ferma un'eventuale sessione precedente e azzera il flame.
+        self.stop_profiling(true);
         match open_process(pid) {
             Ok(h) => {
                 let name = self
@@ -146,6 +162,9 @@ impl Sampler {
                 });
                 self.snap.status = Status::Running;
                 info!("collegato a {name} (PID {pid})");
+                // Avvia la cattura ETW per il flame graph (richiede admin; se non
+                // disponibile, flame_status diventa Unavailable e si prosegue).
+                self.start_profiling(pid);
             }
             Err(ArgusError::Permission { hint }) => {
                 warn!("attach negato al PID {pid}");
@@ -169,6 +188,39 @@ impl Sampler {
         self.last_io_write = 0;
         self.last_sample = Instant::now();
         self.thread_cache = 0;
+    }
+
+    /// Avvia la cattura ETW del flame graph per `pid`. Presuppone stato pulito
+    /// (chiamato da `attach` dopo `stop_profiling`). Senza privilegi admin la
+    /// sessione non parte: lo segnaliamo in `flame_status` e si prosegue.
+    fn start_profiling(&mut self, pid: u32) {
+        match ProfilingSession::start(pid, self.shared.flame.clone()) {
+            Ok(sess) => {
+                self.profiling = Some(sess);
+                self.snap.flame_status = FlameStatus::Active;
+                info!("flame graph: cattura ETW avviata per PID {pid}");
+            }
+            Err(ArgusError::Permission { hint }) => {
+                self.snap.flame_status = FlameStatus::Unavailable(hint);
+            }
+            Err(e) => {
+                warn!("flame graph: cattura ETW non avviata: {e}");
+                self.snap.flame_status = FlameStatus::Unavailable(format!("{e}"));
+            }
+        }
+    }
+
+    /// Ferma cattura + aggregatore (Drop di `ProfilingSession`). Se `clear_flame`,
+    /// azzera anche l'albero; su uscita del target lo si tiene per l'ispezione.
+    fn stop_profiling(&mut self, clear_flame: bool) {
+        if let Some(sess) = self.profiling.take() {
+            drop(sess); // ferma ETW e fa il join dell'aggregatore, in quest'ordine
+            info!("flame graph: cattura ETW fermata");
+        }
+        if clear_flame {
+            self.shared.flame.lock().clear();
+        }
+        self.snap.flame_status = FlameStatus::Off;
     }
 
     /// Rinfresca la lista processi (1 Hz) e aggiorna il conteggio thread del
@@ -206,6 +258,9 @@ impl Sampler {
                             info!("il target {} (PID {}) è terminato", meta.name, meta.pid);
                             self.handle = None;
                             self.snap.status = Status::Exited;
+                            // Ferma la cattura (target morto) ma tieni il flame per
+                            // l'ispezione post-mortem, come le storie congelate.
+                            self.stop_profiling(false);
                         }
                     }
                 }
@@ -229,6 +284,7 @@ impl Sampler {
                     // congeliamo le storie e segnaliamo lo stato (no panic).
                     debug!("campionamento fallito, assumo target terminato: {e}");
                     self.snap.status = Status::Exited;
+                    self.stop_profiling(false);
                 }
             }
         }

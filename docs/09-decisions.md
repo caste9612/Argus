@@ -147,6 +147,20 @@ Scelte:
   DoD Fase 2). Il codice compila, l'`unsafe` è isolato/commentato e il path di
   fallback è testato.
 
+### D16 — Flame graph condiviso via `Mutex`, non arc-swap (deviazione mirata da D4)
+La pipeline ad alta frequenza (polling → Snapshot) resta lock-free via `arc-swap`
+(D4 invariato). Il **flame graph**, invece, è condiviso UI↔aggregatore con un
+`Arc<Mutex<FlameGraph>>`. Motivo: è un albero **mutato di continuo** (un
+`add_stack` per sample); pubblicarne un clone immutabile via `arc-swap` ad ogni
+update costerebbe O(nodi) con molte allocazioni, mentre il dato è a frequenza
+più bassa (limitato dalla risoluzione simboli) e letto dalla UI a ~30 fps. Le
+sezioni critiche sono brevissime: l'aggregatore risolve **fuori** dal lock e lo
+prende solo per gli `add_stack` in batch; la UI lo prende solo per calcolare il
+`layout`. Contesa trascurabile. **Futuro**: se emergessero stalli UI, si passerà
+a pubblicare uno snapshot immutabile *render-only* (`FlameView`) via arc-swap.
+**Conseguenza**: meno codice e nessun clone costoso ora, senza toccare la
+garanzia lock-free della hot path di Fase 1.
+
 ## Questioni aperte
 
 - **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto

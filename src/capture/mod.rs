@@ -5,5 +5,6 @@
 
 pub mod etw;
 pub mod process;
+pub mod profiling;
 pub mod sampler;
 pub mod symbols;
