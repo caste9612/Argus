@@ -14,7 +14,7 @@ const PINK: egui::Color32 = egui::Color32::from_rgb(255, 165, 224);
 pub fn render(ui: &mut egui::Ui, snap: &Snapshot) {
     match &snap.status {
         Status::NotAttached | Status::Error(_) => placeholder(ui),
-        Status::Running | Status::Exited => dashboard(ui, snap),
+        Status::Running | Status::Exited | Status::Replay(_) => dashboard(ui, snap),
     }
 }
 

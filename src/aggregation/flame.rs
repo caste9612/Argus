@@ -21,6 +21,7 @@ pub type NodeId = u32;
 pub const ROOT: NodeId = 0;
 
 /// Un nodo dell'albero: una funzione vista in una specifica posizione di stack.
+#[derive(Clone)]
 struct Node {
     /// Indice del nome nella tabella di interning.
     name: u32,
@@ -47,6 +48,7 @@ pub struct Rect {
 }
 
 /// Albero flame graph con interning dei nomi dei frame.
+#[derive(Clone)]
 pub struct FlameGraph {
     nodes: Vec<Node>,
     /// `(genitore, name_id) -> figlio`. Una sola mappa per tutto l'albero: più

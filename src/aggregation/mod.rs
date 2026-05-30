@@ -30,6 +30,8 @@ pub enum Status {
     Running,
     /// Il processo target è terminato durante la sessione.
     Exited,
+    /// Sessione caricata da file `.argus` (replay statico); etichetta per la UI.
+    Replay(String),
     /// Un'operazione è fallita; messaggio pronto per l'utente.
     Error(String),
 }
@@ -58,6 +60,8 @@ pub struct Snapshot {
     pub status: Status,
     /// Stato della cattura ETW per il flame graph.
     pub flame_status: FlameStatus,
+    /// Messaggio transitorio per la UI (es. "Salvato in …" o errore di caricamento).
+    pub notice: Option<String>,
 
     // Valori correnti (per le KPI card).
     pub cpu: f32,
@@ -88,6 +92,7 @@ impl Snapshot {
             attached: None,
             status: Status::NotAttached,
             flame_status: FlameStatus::Off,
+            notice: None,
             cpu: 0.0,
             working_set_mb: 0.0,
             private_mb: 0.0,

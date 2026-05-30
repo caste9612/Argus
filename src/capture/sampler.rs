@@ -7,6 +7,7 @@ use crate::capture::process::{
     image_name, list_processes, open_process, ProcessHandle, ProcessInfo,
 };
 use crate::capture::profiling::ProfilingSession;
+use crate::persist::{self, Capture};
 use crate::util::error::ArgusError;
 use crate::util::win::{filetime_to_u64, logical_cpu_count};
 use arc_swap::ArcSwap;
@@ -14,6 +15,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::mem::size_of;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -33,6 +35,12 @@ pub enum Command {
     Attach(u32),
     Detach,
     RefreshProcesses,
+    /// Salva la sessione corrente su file `.argus` (Fase 4).
+    SaveCapture,
+    /// Carica una sessione da file `.argus` e la mostra in replay (Fase 4).
+    OpenCapture(PathBuf),
+    /// Rinfresca l'elenco dei file `.argus` salvati.
+    RefreshCaptures,
     Shutdown,
 }
 
@@ -44,6 +52,8 @@ pub struct Shared {
     /// mutato di continuo dall'aggregatore e letto dalla UI per il rendering;
     /// le sezioni critiche sono brevissime (add_stack / layout). Vedi D16.
     pub flame: Arc<Mutex<FlameGraph>>,
+    /// Elenco dei file `.argus` salvati, dal più recente (Fase 4).
+    pub captures: ArcSwap<Vec<PathBuf>>,
 }
 
 impl Shared {
@@ -53,6 +63,7 @@ impl Shared {
             metrics: ArcSwap::from_pointee(Snapshot::new(num_cpus, false)),
             processes: ArcSwap::from_pointee(Vec::new()),
             flame: Arc::new(Mutex::new(FlameGraph::new())),
+            captures: ArcSwap::from_pointee(Vec::new()),
         })
     }
 }
@@ -122,6 +133,7 @@ impl Sampler {
                 self.handle = None;
                 self.snap.attached = None;
                 self.snap.status = Status::NotAttached;
+                self.snap.notice = None;
                 self.snap.reset_series();
                 self.reset_baselines();
                 self.publish();
@@ -130,6 +142,15 @@ impl Sampler {
                 self.refresh_processes();
                 self.publish();
             }
+            Command::SaveCapture => {
+                self.save_capture();
+                self.publish();
+            }
+            Command::OpenCapture(path) => {
+                self.open_capture(path);
+                self.publish();
+            }
+            Command::RefreshCaptures => self.refresh_captures(),
             Command::Shutdown => {} // gestito nel loop
         }
     }
@@ -137,6 +158,7 @@ impl Sampler {
     fn attach(&mut self, pid: u32) {
         // Stato pulito: ferma un'eventuale sessione precedente e azzera il flame.
         self.stop_profiling(true);
+        self.snap.notice = None;
         match open_process(pid) {
             Ok(h) => {
                 let name = self
@@ -223,6 +245,53 @@ impl Sampler {
         self.snap.flame_status = FlameStatus::Off;
     }
 
+    /// Rinfresca l'elenco dei file `.argus` salvati per la UI.
+    fn refresh_captures(&self) {
+        self.shared
+            .captures
+            .store(Arc::new(persist::list_captures()));
+    }
+
+    /// Salva la sessione corrente (snapshot + flame) su file `.argus`.
+    fn save_capture(&mut self) {
+        let cap = {
+            let flame = self.shared.flame.lock();
+            Capture::from_live(&self.snap, &flame, env!("CARGO_PKG_VERSION"))
+        };
+        match persist::save_capture_file(&cap) {
+            Ok(path) => {
+                info!("sessione salvata in {path:?}");
+                self.snap.notice = Some(format!("Sessione salvata: {}", path.display()));
+                self.refresh_captures();
+            }
+            Err(e) => {
+                warn!("salvataggio sessione fallito: {e}");
+                self.snap.notice = Some(format!("Salvataggio fallito: {e}"));
+            }
+        }
+    }
+
+    /// Carica una sessione `.argus` e passa al replay statico.
+    fn open_capture(&mut self, path: PathBuf) {
+        match persist::load_capture_file(&path) {
+            Ok(cap) => {
+                // Esci dallo stato live: ferma cattura e stacca il target.
+                self.stop_profiling(true);
+                self.handle = None;
+                self.reset_baselines();
+                let snap = cap.to_snapshot();
+                *self.shared.flame.lock() = cap.flame; // sposta il flame caricato
+                self.snap = snap;
+                self.snap.notice = Some(format!("Replay: {}", path.display()));
+                info!("replay caricato da {path:?}");
+            }
+            Err(e) => {
+                warn!("caricamento sessione fallito: {e}");
+                self.snap.notice = Some(format!("Caricamento fallito: {e}"));
+            }
+        }
+    }
+
     /// Rinfresca la lista processi (1 Hz) e aggiorna il conteggio thread del
     /// target. Un solo snapshot Toolhelp al secondo: overhead trascurabile.
     fn refresh_processes(&mut self) {
@@ -250,17 +319,21 @@ impl Sampler {
                 self.shared.processes.store(arc.clone());
                 self.last_list = arc;
 
-                // Aggiorna il conteggio thread del target; se sparito → uscito.
-                if let Some(meta) = self.snap.attached.clone() {
-                    match self.last_list.iter().find(|p| p.pid == meta.pid) {
-                        Some(p) => self.thread_cache = p.threads,
-                        None => {
-                            info!("il target {} (PID {}) è terminato", meta.name, meta.pid);
-                            self.handle = None;
-                            self.snap.status = Status::Exited;
-                            // Ferma la cattura (target morto) ma tieni il flame per
-                            // l'ispezione post-mortem, come le storie congelate.
-                            self.stop_profiling(false);
+                // Solo quando siamo live (handle aperto): aggiorna il conteggio
+                // thread del target e, se sparito, segnala l'uscita. In replay
+                // (handle None) non tocchiamo lo stato.
+                if self.handle.is_some() {
+                    if let Some(meta) = self.snap.attached.clone() {
+                        match self.last_list.iter().find(|p| p.pid == meta.pid) {
+                            Some(p) => self.thread_cache = p.threads,
+                            None => {
+                                info!("il target {} (PID {}) è terminato", meta.name, meta.pid);
+                                self.handle = None;
+                                self.snap.status = Status::Exited;
+                                // Ferma la cattura (target morto) ma tieni il flame
+                                // per l'ispezione post-mortem (storie congelate).
+                                self.stop_profiling(false);
+                            }
                         }
                     }
                 }
@@ -358,6 +431,7 @@ impl Sampler {
 pub fn run(shared: Arc<Shared>, rx: Receiver<Command>) {
     let mut s = Sampler::new(shared);
     s.refresh_processes();
+    s.refresh_captures();
     s.publish();
 
     let mut last = Instant::now();

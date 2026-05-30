@@ -197,6 +197,21 @@ compressione. Scelte:
   nuova versione del formato senza rotture.
 **Conseguenza**: record/replay senza nuove dipendenze pesanti, formato evolvibile.
 
+### D19 — Record/replay: auto-path + lista in-app, niente file dialog nativo
+Salva/apri sessione (Fase 4) senza dialog nativo:
+- **Salva**: file `.argus` auto-nominato (`<processo>-<epoch>.argus`) in
+  `%LOCALAPPDATA%\Argus\captures`. **Apri**: lista in-app dei `.argus`
+  (scansionata dal sampler, pubblicata via `ArcSwap<Vec<PathBuf>>`). Evita la
+  dipendenza `rfd` o codice `unsafe` su comdlg32. Il dialog nativo resta una
+  nicety futura.
+- **Replay**: nuovo `Status::Replay`; il sampler inietta lo `Snapshot`
+  ricostruito (`Capture::to_snapshot`) e il flame caricato, e non li sovrascrive
+  (handle `None`; il controllo "target uscito" è ora gated su handle live, così
+  il replay non viene scambiato per un processo terminato).
+- **notice**: campo transitorio nello `Snapshot` per il feedback UI
+  (salvato/caricato/errore).
+**Conseguenza**: record/replay completo, zero nuove dipendenze.
+
 ## Questioni aperte
 
 - **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto

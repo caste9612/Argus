@@ -15,6 +15,7 @@ use crate::capture::process::ProcessInfo;
 use crate::capture::sampler::Command;
 use eframe::egui;
 use parking_lot::Mutex;
+use std::path::PathBuf;
 
 /// Tab del pannello centrale.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -49,15 +50,17 @@ pub struct State {
 
 /// Disegna l'intera UI per un frame. I comandi da eseguire vengono accodati in
 /// `out`. `flame` è l'albero condiviso con l'aggregatore (letto sotto lock).
+#[allow(clippy::too_many_arguments)] // UI di frame: tanti dati di sola lettura
 pub fn render(
     ctx: &egui::Context,
     state: &mut State,
     snap: &Snapshot,
     procs: &[ProcessInfo],
     flame: &Mutex<FlameGraph>,
+    captures: &[PathBuf],
     out: &mut Vec<Command>,
 ) {
-    top_bar(ctx, snap, out);
+    top_bar(ctx, snap, captures, out);
     process_list::render(ctx, state, procs, out);
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -78,7 +81,7 @@ pub fn render(
     });
 }
 
-fn top_bar(ctx: &egui::Context, snap: &Snapshot, out: &mut Vec<Command>) {
+fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut Vec<Command>) {
     egui::TopBottomPanel::top("top").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.heading("Argus");
@@ -121,6 +124,15 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, out: &mut Vec<Command>) {
                         out.push(Command::Detach);
                     }
                 }
+                Status::Replay(label) => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(124, 185, 255),
+                        format!("▷ replay: {label}"),
+                    );
+                    if ui.button("Chiudi").clicked() {
+                        out.push(Command::Detach);
+                    }
+                }
                 Status::Error(msg) => {
                     ui.colored_label(egui::Color32::from_rgb(255, 107, 107), "⚠")
                         .on_hover_text(msg.clone());
@@ -133,7 +145,39 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, out: &mut Vec<Command>) {
                     ui.colored_label(egui::Color32::from_rgb(200, 200, 120), "○ non collegato");
                 }
             }
+
+            // --- Controlli sessione (Fase 4): salva / apri ---
+            ui.separator();
+            let has_data = !matches!(snap.status, Status::NotAttached);
+            if ui
+                .add_enabled(has_data, egui::Button::new("💾 Salva"))
+                .on_hover_text("Salva la sessione corrente in un file .argus")
+                .clicked()
+            {
+                out.push(Command::SaveCapture);
+            }
+            ui.menu_button("📂 Apri", |ui| {
+                out.push(Command::RefreshCaptures);
+                if captures.is_empty() {
+                    ui.label("Nessuna sessione salvata.");
+                }
+                for path in captures {
+                    let label = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("(senza nome)");
+                    if ui.button(label).clicked() {
+                        out.push(Command::OpenCapture(path.clone()));
+                        ui.close_menu();
+                    }
+                }
+            });
         });
+
+        // Seconda riga: messaggio transitorio (salvataggio/caricamento).
+        if let Some(msg) = &snap.notice {
+            ui.colored_label(egui::Color32::from_rgb(124, 185, 255), truncate(msg, 120));
+        }
     });
 }
 

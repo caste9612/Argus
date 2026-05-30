@@ -8,11 +8,14 @@
 //! byte `compression` nell'header lascia spazio a introdurla senza rotture.
 
 use crate::aggregation::flame::{FlameGraph, NodeId};
+use crate::aggregation::{FlameStatus, ProcessMeta, Snapshot, Status};
 use crate::util::bytes::{
     put_f32, put_f32_slice, put_str, put_u16, put_u32, put_u64, put_u8, ByteReader,
 };
 use crate::util::error::ArgusError;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAGIC: &[u8; 8] = b"ARGUSCAP";
 const FORMAT_VERSION: u16 = 1;
@@ -36,6 +39,132 @@ pub struct Capture {
     pub total_io_read_mb: f32,
     pub total_io_write_mb: f32,
     pub flame: FlameGraph,
+}
+
+impl Capture {
+    /// Costruisce una `Capture` dallo stato live (snapshot + flame clonato).
+    pub fn from_live(snap: &Snapshot, flame: &FlameGraph, argus_version: &str) -> Capture {
+        let (pid, process_name) = match &snap.attached {
+            Some(m) => (m.pid, m.name.clone()),
+            None => (0, "sessione".to_string()),
+        };
+        Capture {
+            argus_version: argus_version.to_string(),
+            process_name,
+            pid,
+            num_cpus: snap.num_cpus,
+            cpu_hist: snap.cpu_hist.iter().copied().collect(),
+            ws_hist: snap.ws_hist.iter().copied().collect(),
+            priv_hist: snap.priv_hist.iter().copied().collect(),
+            io_r_hist: snap.io_r_hist.iter().copied().collect(),
+            io_w_hist: snap.io_w_hist.iter().copied().collect(),
+            thread_hist: snap.thread_hist.iter().copied().collect(),
+            handle_hist: snap.handle_hist.iter().copied().collect(),
+            total_io_read_mb: snap.total_io_read_mb,
+            total_io_write_mb: snap.total_io_write_mb,
+            flame: flame.clone(),
+        }
+    }
+
+    /// Ricostruisce uno `Snapshot` per il replay statico (storie + metadati +
+    /// stato `Replay`). Il flame va impostato a parte da `self.flame`.
+    pub fn to_snapshot(&self) -> Snapshot {
+        let last = |v: &[f32]| v.last().copied().unwrap_or(0.0);
+        let mut s = Snapshot::new(self.num_cpus, false);
+        s.cpu_hist = self.cpu_hist.iter().copied().collect();
+        s.ws_hist = self.ws_hist.iter().copied().collect();
+        s.priv_hist = self.priv_hist.iter().copied().collect();
+        s.io_r_hist = self.io_r_hist.iter().copied().collect();
+        s.io_w_hist = self.io_w_hist.iter().copied().collect();
+        s.thread_hist = self.thread_hist.iter().copied().collect();
+        s.handle_hist = self.handle_hist.iter().copied().collect();
+        // Valori correnti = ultimo campione, così le KPI card mostrano qualcosa.
+        s.cpu = last(&self.cpu_hist);
+        s.working_set_mb = last(&self.ws_hist);
+        s.private_mb = last(&self.priv_hist);
+        s.io_read_mb_s = last(&self.io_r_hist);
+        s.io_write_mb_s = last(&self.io_w_hist);
+        s.threads = last(&self.thread_hist) as u32;
+        s.handles = last(&self.handle_hist) as u32;
+        s.total_io_read_mb = self.total_io_read_mb;
+        s.total_io_write_mb = self.total_io_write_mb;
+        s.attached = Some(ProcessMeta {
+            pid: self.pid,
+            name: self.process_name.clone(),
+        });
+        s.status = Status::Replay(self.process_name.clone());
+        s.flame_status = FlameStatus::Off;
+        s
+    }
+}
+
+/// Cartella dei salvataggi: `%LOCALAPPDATA%\Argus\captures`.
+pub fn captures_dir() -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA")?;
+    Some(Path::new(&local).join("Argus").join("captures"))
+}
+
+/// Salva la `Capture` in un file `.argus` con nome auto-generato; ritorna il
+/// percorso. Mai panic: gli errori di I/O diventano `ArgusError`.
+pub fn save_capture_file(cap: &Capture) -> Result<PathBuf, ArgusError> {
+    let dir = captures_dir()
+        .ok_or_else(|| ArgusError::Internal("LOCALAPPDATA non disponibile".into()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ArgusError::Internal(format!("impossibile creare {dir:?}: {e}")))?;
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("{}-{secs}.argus", sanitize(&cap.process_name)));
+    std::fs::write(&path, write_capture(cap))
+        .map_err(|e| ArgusError::Internal(format!("scrittura di {path:?} fallita: {e}")))?;
+    Ok(path)
+}
+
+/// Carica una `Capture` da file `.argus`.
+pub fn load_capture_file(path: &Path) -> Result<Capture, ArgusError> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| ArgusError::Internal(format!("lettura di {path:?} fallita: {e}")))?;
+    read_capture(&bytes)
+}
+
+/// Elenca i file `.argus` nella cartella dei salvataggi, dal più recente.
+pub fn list_captures() -> Vec<PathBuf> {
+    let Some(dir) = captures_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "argus"))
+        .collect();
+    // I nomi incorporano l'epoch in secondi: ordine discendente ≈ più recenti prima.
+    files.sort();
+    files.reverse();
+    files
+}
+
+/// Rende un nome di processo sicuro per un filename.
+fn sanitize(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('_');
+    if trimmed.is_empty() {
+        "sessione".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Serializza una `Capture` nel formato `.argus` (v1, non compresso).
@@ -253,5 +382,55 @@ mod tests {
             read_capture(&bytes).is_err(),
             "file troncato deve dare Err, non panic"
         );
+    }
+
+    #[test]
+    fn from_live_to_snapshot_preserves_data() {
+        use std::collections::VecDeque;
+        let mut flame = FlameGraph::new();
+        flame.add_stack(&["main", "work"]);
+        let mut snap = Snapshot::new(8, false);
+        snap.attached = Some(ProcessMeta {
+            pid: 99,
+            name: "test.exe".into(),
+        });
+        snap.cpu_hist = VecDeque::from(vec![10.0, 20.0, 30.0]);
+        snap.ws_hist = VecDeque::from(vec![50.0]);
+        snap.total_io_read_mb = 7.0;
+
+        let cap = Capture::from_live(&snap, &flame, "0.1.0");
+        assert_eq!(cap.pid, 99);
+        assert_eq!(cap.process_name, "test.exe");
+        assert_eq!(cap.cpu_hist, vec![10.0, 20.0, 30.0]);
+        assert_eq!(cap.flame.total_samples(), 1);
+
+        let s2 = cap.to_snapshot();
+        assert_eq!(s2.num_cpus, 8);
+        assert_eq!(s2.cpu, 30.0, "valore corrente = ultimo campione");
+        assert_eq!(s2.working_set_mb, 50.0);
+        assert_eq!(s2.total_io_read_mb, 7.0);
+        assert_eq!(s2.cpu_hist.len(), 3);
+        assert!(matches!(s2.status, Status::Replay(_)));
+    }
+
+    #[test]
+    fn save_and_load_via_file_round_trips() {
+        let cap = sample_capture();
+        let path = std::env::temp_dir().join("argus_test_capture.argus");
+        std::fs::write(&path, write_capture(&cap)).expect("scrittura file temp");
+        let back = load_capture_file(&path).expect("caricamento file");
+        assert_eq!(back.pid, cap.pid);
+        assert_eq!(back.process_name, cap.process_name);
+        assert_eq!(back.flame.node_count(), cap.flame.node_count());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn sanitize_makes_safe_filenames() {
+        let s = sanitize("My App (x86)!");
+        assert!(!s.contains(' ') && !s.contains('(') && !s.is_empty());
+        assert_eq!(sanitize(""), "sessione");
+        assert_eq!(sanitize("***"), "sessione");
+        assert_eq!(sanitize("chrome.exe"), "chrome.exe");
     }
 }
