@@ -161,6 +161,18 @@ a pubblicare uno snapshot immutabile *render-only* (`FlameView`) via arc-swap.
 **Conseguenza**: meno codice e nessun clone costoso ora, senza toccare la
 garanzia lock-free della hot path di Fase 1.
 
+### D17 — Flame graph renderizzato col Painter di egui (non pipeline wgpu custom)
+La roadmap prevedeva un renderer wgpu **custom** (un quad per nodo). Per la prima
+versione disegniamo invece i rettangoli col `Painter` di egui (`ui/flame.rs`).
+Motivi: per il numero di nodi in gioco (migliaia) egui è già performante e
+affidabile; è codice molto più semplice e — soprattutto — **verificabile
+eseguendo l'app** (la cattura ETW richiede admin, ma il rendering no). **Non è un
+cambio di stack**: egui disegna comunque via wgpu sotto, quindi non ricade nel
+divieto di cambiare stack senza discussione. Il renderer wgpu custom resta
+un'ottimizzazione futura, sensata solo per grafi enormi (>10⁵ nodi) o effetti
+particolari. **Conseguenza**: tab Flame interattiva (zoom/drill, ricerca, hover)
+con poco codice; `viz/` non è ancora necessario.
+
 ## Questioni aperte
 
 - **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto

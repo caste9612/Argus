@@ -5,13 +5,24 @@
 //! Nessun accesso diretto a Win32 o ai canali qui dentro.
 
 mod dashboard;
+mod flame;
 mod kpi;
 mod process_list;
 
+use crate::aggregation::flame::{FlameGraph, NodeId};
 use crate::aggregation::{Snapshot, Status};
 use crate::capture::process::ProcessInfo;
 use crate::capture::sampler::Command;
 use eframe::egui;
+use parking_lot::Mutex;
+
+/// Tab del pannello centrale.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    Dashboard,
+    Flame,
+}
 
 /// Criterio di ordinamento secondario della lista processi (il raggruppamento
 /// "utente prima" è sempre primario).
@@ -30,21 +41,40 @@ pub struct State {
     pub selected_pid: Option<u32>,
     pub sort_key: SortKey,
     pub hide_system: bool,
+    pub tab: Tab,
+    /// Nodo su cui è zoomato il flame graph (ROOT = vista intera).
+    pub flame_focus: NodeId,
+    pub flame_search: String,
 }
 
 /// Disegna l'intera UI per un frame. I comandi da eseguire vengono accodati in
-/// `out`.
+/// `out`. `flame` è l'albero condiviso con l'aggregatore (letto sotto lock).
 pub fn render(
     ctx: &egui::Context,
     state: &mut State,
     snap: &Snapshot,
     procs: &[ProcessInfo],
+    flame: &Mutex<FlameGraph>,
     out: &mut Vec<Command>,
 ) {
     top_bar(ctx, snap, out);
     process_list::render(ctx, state, procs, out);
     egui::CentralPanel::default().show(ctx, |ui| {
-        dashboard::render(ui, snap);
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut state.tab, Tab::Dashboard, "📊 Metriche");
+            ui.selectable_value(&mut state.tab, Tab::Flame, "🔥 Flame graph");
+        });
+        ui.separator();
+        match state.tab {
+            Tab::Dashboard => dashboard::render(ui, snap),
+            Tab::Flame => flame::render(
+                ui,
+                snap,
+                flame,
+                &mut state.flame_focus,
+                &mut state.flame_search,
+            ),
+        }
     });
 }
 

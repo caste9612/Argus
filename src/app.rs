@@ -47,7 +47,14 @@ impl eframe::App for ArgusApp {
         let procs = self.shared.processes.load_full();
 
         self.cmd_buf.clear();
-        ui::render(ctx, &mut self.ui, &snap, &procs, &mut self.cmd_buf);
+        ui::render(
+            ctx,
+            &mut self.ui,
+            &snap,
+            &procs,
+            &self.shared.flame,
+            &mut self.cmd_buf,
+        );
         for cmd in self.cmd_buf.drain(..) {
             if self.cmd_tx.send(cmd).is_err() {
                 warn!("canale comandi chiuso: il sampler non risponde");
