@@ -14,9 +14,11 @@ Profiler GPU-accelerato per Windows. Si attacca a un processo in esecuzione (sen
 
 **Fase 4 (recording + diff + export) completata.** Formato `.argus` binario versionato (`persist.rs`), record/replay (stato `Replay`), diff tra due capture con grafici sovrapposti + "movers" (`diff.rs`, tab Diff), export CSV/folded-stacks/SVG (`export.rs`). UI: Salva/Apri/Esporta/Confronta nella top bar. Tutto coperto da test (round-trip, export, diff).
 
-**Fase 3 (allocazioni + lock + timeline): fondamenta pronte.** Parser `CSwitch` (`capture/cswitch.rs`) + struttura dati timeline stati thread (`aggregation/timeline.rs`), puri e testati. Cattura CSwitch live (ETW), mappatura TID→PID, UI Gantt, allocazioni e lock: da fare (admin-gated) — vedi handoff in `07-roadmap.md`.
+**Fase 3 (timeline stati-thread): live e verificata.** Parser `CSwitch` (`capture/cswitch.rs`), struttura dati timeline (`aggregation/timeline.rs`), cattura `CSwitch` via ETW (`EVENT_TRACE_FLAG_CSWITCH`) filtrata sui TID del target (Toolhelp `thread_ids` + `set_tracked`), tab "Timeline" Gantt (`ui/timeline_view.rs`). Verificata live (admin, `tests/etw_live`: 732 CSwitch). **Allocazioni (HeapTrace) e lock contention: ancora da fare** — vedi handoff in `07-roadmap.md`.
 
-Stato test: **40 unit + 3 integration verdi**, clippy/fmt puliti, release 10.62 MB. Per le decisioni (D1–D19) vedi [`docs/09-decisions.md`](docs/09-decisions.md); per fasi e **lavoro residuo/verifica** [`docs/07-roadmap.md`](docs/07-roadmap.md).
+Comodità CLI: `argus.exe --attach <PID> [--tab flame|timeline|metriche|diff]`. Guida d'uso: [`docs/10-uso.md`](docs/10-uso.md).
+
+Stato test: **42 unit + 3 integration + 1 ignored (admin) verdi**, clippy/fmt puliti, release ~10.6 MB. Decisioni D1–D20 in [`docs/09-decisions.md`](docs/09-decisions.md); fasi e **lavoro residuo/verifica** in [`docs/07-roadmap.md`](docs/07-roadmap.md).
 
 ## Documenti da leggere prima di toccare codice
 

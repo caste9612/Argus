@@ -80,20 +80,20 @@ D14); misura overhead; resa visiva del flame con dati reali a video.
 **Deliverable**:
 - ✅ Parser eventi `CSwitch` (provider `Thread`) — puro e testato (`capture/cswitch.rs`)
 - ✅ Struttura dati timeline stati thread — intervalli Running per thread, testata (`aggregation/timeline.rs`)
-- ⬜ Cattura `CSwitch` live (estendere la sessione ETW con `EVENT_TRACE_FLAG_CSWITCH`) — *admin-gated*
-- ⬜ Mappatura TID→PID per filtrare i thread del target (Toolhelp `TH32CS_SNAPTHREAD` o eventi Thread)
-- ⬜ Timeline (Gantt) renderizzata con il Painter di egui (come il flame, D17)
+- ✅ Cattura `CSwitch` live (sessione ETW con `EVENT_TRACE_FLAG_CSWITCH`) — **verificata** (admin)
+- ✅ Filtro per thread del target via Toolhelp `TH32CS_SNAPTHREAD` (`thread_ids`) + `set_tracked`
+- ✅ Timeline (Gantt) renderizzata col Painter di egui — tab "Timeline" (`ui/timeline_view.rs`)
 - ⬜ Heap allocation tracking (provider `HeapTrace`/`Kernel-Memory`) + allocation flame graph
 - ⬜ Lock contention detection (analisi `CSwitch` su wait object) + pannello "Locks"
 
-**Stato**: le fondamenta pure (parser + struttura dati) sono fatte e testate. Il resto è
-in larga parte *admin-gated* (ETW kernel) come la Fase 2 → vedi "Lavoro residuo" sotto.
+**Stato**: la **timeline stati-thread è completa e verificata live** (admin,
+`tests/etw_live`: 732 CSwitch dal fixture, intervalli costruiti). Restano allocazioni
+e lock (provider aggiuntivi) → vedi "Lavoro residuo".
 
 **DoD**:
-- ⏳ Vedi un thread bloccato su lock con indicazione visiva chiara
-- ⏳ Identifichi allocazioni hot path con stack trace
-- ⏳ Cumulative allocations per stack visibile
-- ⏳ Timeline scrub fluido anche con 30 thread × 60 s
+- ✅ Timeline degli stati Running per thread (Gantt) — verificata con cattura reale
+- ⏳ Lock contention (waiter analysis su `CSwitch`) — da fare
+- ⏳ Allocation tracking + cumulative per stack — da fare (provider `HeapTrace`)
 
 ---
 
@@ -161,10 +161,9 @@ Comodità aggiunta: `argus.exe --attach <pid>` si collega subito e apre la tab F
 ### ⬜ Da implementare per chiudere le fasi (con indicazioni)
 - **Fase 2 rifinitura**: risoluzione simboli del target *on-disk* via eventi ETW
   Image/Load (più robusta dell'handle vivo, vedi D14).
-- **Fase 3 timeline live**: estendere `EtwProfiler` con `EVENT_TRACE_FLAG_CSWITCH`,
-  instradare i `CSwitch` (già parsabili) verso un `ThreadTimeline` condiviso, filtrare i
-  TID del target (Toolhelp `TH32CS_SNAPTHREAD`), e una tab Gantt (Painter egui, come il
-  flame). Le fondamenta pure sono già pronte e testate.
+- ✅ **Fase 3 timeline live**: FATTA e verificata (CSwitch via ETW → `ThreadTimeline`
+  filtrata sui TID del target via Toolhelp, tab Gantt). Resta solo la resa a video del
+  Gantt da confermare (lo screenshot automatico è bloccato da UIPI sulle finestre elevate).
 - **Fase 3 allocazioni/lock**: provider `HeapTrace`/`Kernel-Memory` per le allocazioni
   (+ allocation flame graph) e analisi `CSwitch` su wait object per la contesa lock.
 - **Fase 5**: PMU/GPU — richiede driver/SDK vendor; rivalutare la fattibilità in user mode.
