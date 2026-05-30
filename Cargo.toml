@@ -31,6 +31,7 @@ features = [
     "Win32_System_WindowsProgramming",
     "Win32_System_Diagnostics_Debug", # DbgHelp: symbol resolution (Fase 2)
     "Win32_System_Diagnostics_Etw",   # ETW: sessione kernel + stack sample (Fase 2)
+    "Win32_System_Diagnostics_ToolHelp", # snapshot thread del target (Fase 3)
     "Win32_System_Time",              # richiesto da OpenTraceW / EVENT_TRACE_LOGFILEW
     "Win32_Security",
 ]

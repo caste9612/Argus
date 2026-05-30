@@ -9,8 +9,10 @@ mod diff_view;
 mod flame;
 mod kpi;
 mod process_list;
+mod timeline_view;
 
 use crate::aggregation::flame::{FlameGraph, NodeId};
+use crate::aggregation::timeline::ThreadTimeline;
 use crate::aggregation::{Snapshot, Status};
 use crate::capture::process::ProcessInfo;
 use crate::capture::sampler::Command;
@@ -26,6 +28,7 @@ pub enum Tab {
     #[default]
     Dashboard,
     Flame,
+    Timeline,
     Diff,
 }
 
@@ -61,6 +64,7 @@ pub fn render(
     snap: &Snapshot,
     procs: &[ProcessInfo],
     flame: &Mutex<FlameGraph>,
+    timeline: &Mutex<ThreadTimeline>,
     captures: &[PathBuf],
     diff: Option<&DiffSummary>,
     out: &mut Vec<Command>,
@@ -71,6 +75,7 @@ pub fn render(
         ui.horizontal(|ui| {
             ui.selectable_value(&mut state.tab, Tab::Dashboard, "📊 Metriche");
             ui.selectable_value(&mut state.tab, Tab::Flame, "🔥 Flame graph");
+            ui.selectable_value(&mut state.tab, Tab::Timeline, "📶 Timeline");
             ui.selectable_value(&mut state.tab, Tab::Diff, "⇄ Diff");
         });
         ui.separator();
@@ -83,6 +88,7 @@ pub fn render(
                 &mut state.flame_focus,
                 &mut state.flame_search,
             ),
+            Tab::Timeline => timeline_view::render(ui, snap, timeline),
             Tab::Diff => diff_view::render(ui, diff),
         }
     });

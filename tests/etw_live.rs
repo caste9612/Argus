@@ -6,14 +6,15 @@
 //! cargo test --test etw_live -- --ignored --nocapture
 //! ```
 //!
-//! Verifica end-to-end il path ETW: avvio sessione kernel + stack-walk +
-//! consumer + parsing + filtro per PID, attaccandosi a un binario `fixture`
-//! CPU-bound e controllando che arrivino stack reali. Prova anche a risolvere i
-//! simboli del target vivo (best-effort).
+//! Verifica end-to-end il path ETW (Fase 2 + 3): avvio sessione kernel +
+//! stack-walk + CSwitch + consumer + parsing + filtri, attaccandosi a un binario
+//! `fixture` CPU-bound. Controlla che arrivino stack reali (flame) e context
+//! switch (timeline), e prova a risolvere i simboli del target vivo (best-effort).
 
 use argus::aggregation::flame::FlameGraph;
-use argus::capture::etw::EtwProfiler;
-use argus::capture::process::open_for_symbols;
+use argus::aggregation::timeline::ThreadTimeline;
+use argus::capture::etw::{EtwEvent, EtwProfiler};
+use argus::capture::process::{open_for_symbols, thread_ids};
 use argus::capture::symbols::SymbolResolver;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -30,8 +31,10 @@ fn captures_real_stacks_from_fixture() {
     println!("== ETW LIVE == fixture avviato, PID {pid}");
     std::thread::sleep(Duration::from_millis(600)); // warmup: thread attivi
 
+    let tids: std::collections::HashSet<u32> = thread_ids(pid).into_iter().collect();
+    println!("thread del target: {}", tids.len());
     let (tx, rx) = crossbeam_channel::bounded(16_384);
-    let profiler = match EtwProfiler::start(pid, tx) {
+    let profiler = match EtwProfiler::start(pid, tids, tx) {
         Ok(p) => p,
         Err(e) => {
             let _ = child.kill();
@@ -39,14 +42,23 @@ fn captures_real_stacks_from_fixture() {
             panic!("EtwProfiler::start fallito (sei amministratore?): {e}");
         }
     };
-    println!("sessione ETW avviata, raccolgo ~3 s di stack…");
+    println!("sessione ETW avviata, raccolgo ~3 s di eventi…");
 
-    // Raccogli stack per ~3 secondi.
+    // Raccogli ~3 s: gli stack vanno in `samples`, i context-switch costruiscono
+    // la timeline in tempo reale (preservando l'ordine).
     let mut samples = Vec::new();
+    let mut switch_count = 0usize;
+    let mut timeline = ThreadTimeline::new();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
-        if let Ok(s) = rx.recv_timeout(Duration::from_millis(200)) {
-            samples.push(s);
+        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
+            match ev {
+                EtwEvent::Stack(s) => samples.push(s),
+                EtwEvent::Switch(sw) => {
+                    switch_count += 1;
+                    timeline.on_cswitch(sw.timestamp, sw.cpu, sw.new_tid);
+                }
+            }
         }
     }
 
@@ -110,8 +122,14 @@ fn captures_real_stacks_from_fixture() {
     // RtlUserThreadStart), allora ETW dà gli stack leaf-first e l'inversione
     // (.rev()) verso root→leaf è corretta.
     println!("  ORDINE STACK: {order_hint}");
+    let (t0, t1) = timeline.span();
+    println!(
+        "  context switch ........... {switch_count} (timeline: {} thread, span {} tick)",
+        timeline.thread_count(),
+        t1.saturating_sub(t0)
+    );
 
-    // --- Asserzioni: la pipe ETW funziona ---
+    // --- Asserzioni: la pipe ETW funziona (flame + timeline) ---
     assert!(
         !samples.is_empty(),
         "nessuno stack catturato: stack-walk non attivo o provider PROFILE non abilitato"
@@ -121,5 +139,13 @@ fn captures_real_stacks_from_fixture() {
         "alcuni stack non appartengono al PID target: filtro errato"
     );
     assert!(flame.total_samples() > 0, "il flame graph è vuoto");
+    assert!(
+        switch_count > 0,
+        "nessun context switch: provider CSWITCH non attivo?"
+    );
+    assert!(
+        timeline.thread_count() > 0,
+        "la timeline non ha intervalli: ricostruzione errata?"
+    );
     println!("== ETW LIVE == OK ✅");
 }

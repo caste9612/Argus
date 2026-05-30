@@ -21,8 +21,10 @@
 //!   **Il path di cattura live va verificato manualmente con privilegi elevati**
 //!   (vedi `docs/06-reliability.md`, edge case ETW di Fase 2).
 
+use crate::capture::cswitch::{parse_cswitch, OPCODE_CSWITCH, THREAD_GUID};
 use crate::util::error::ArgusError;
 use crossbeam_channel::Sender;
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -36,8 +38,8 @@ use windows::Win32::Foundation::{
 use windows::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, OpenTraceW, ProcessTrace, StartTraceW, TraceSetInformation,
     TraceStackTracingInfo, CLASSIC_EVENT_ID, CONTROLTRACE_HANDLE, EVENT_RECORD,
-    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_PROFILE, EVENT_TRACE_LOGFILEW,
-    EVENT_TRACE_LOGFILEW_0, EVENT_TRACE_LOGFILEW_1, EVENT_TRACE_PROPERTIES,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_CSWITCH, EVENT_TRACE_FLAG_PROFILE,
+    EVENT_TRACE_LOGFILEW, EVENT_TRACE_LOGFILEW_0, EVENT_TRACE_LOGFILEW_1, EVENT_TRACE_PROPERTIES,
     EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
     PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
 };
@@ -70,6 +72,25 @@ pub struct StackSample {
     pub pid: u32,
     pub tid: u32,
     pub frames: Vec<u64>,
+}
+
+/// Un context switch osservato: l'istante, la CPU e i thread coinvolti. Tempo e
+/// CPU vengono dall'`EVENT_RECORD` (header + buffer context), non dal payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SwitchEvent {
+    pub timestamp: u64,
+    pub cpu: u16,
+    pub new_tid: u32,
+    pub old_tid: u32,
+}
+
+/// Evento ETW consegnato all'aggregatore: uno stack sample (flame graph) o un
+/// context switch (timeline). Un solo canale preserva l'ordine temporale, che
+/// serve alla ricostruzione degli intervalli Running.
+#[derive(Clone, Debug)]
+pub enum EtwEvent {
+    Stack(StackSample),
+    Switch(SwitchEvent),
 }
 
 /// Dimensione del prefisso fisso del payload StackWalk:
@@ -141,7 +162,8 @@ impl KernelTraceProps {
         k.props.LoggerNameOffset = size_of::<EVENT_TRACE_PROPERTIES>() as u32;
         if real_time {
             k.props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-            k.props.EnableFlags = EVENT_TRACE_FLAG_PROFILE;
+            // PROFILE = sample-profile CPU (flame); CSWITCH = context switch (timeline).
+            k.props.EnableFlags = EVENT_TRACE_FLAG_PROFILE | EVENT_TRACE_FLAG_CSWITCH;
         }
         let wide = KERNEL_LOGGER_NAME.encode_utf16().collect::<Vec<u16>>();
         k.name[..wide.len()].copy_from_slice(&wide);
@@ -158,7 +180,9 @@ impl KernelTraceProps {
 /// frame del thread consumer per tutta la durata di `ProcessTrace`.
 struct ConsumerCtx {
     target_pid: u32,
-    tx: Sender<StackSample>,
+    /// TID del target, per filtrare i CSwitch (che non portano il PID).
+    target_tids: HashSet<u32>,
+    tx: Sender<EtwEvent>,
 }
 
 /// Profiler ETW: avvia la sessione kernel, abilita lo stack-walk dei sample e
@@ -174,13 +198,18 @@ pub struct EtwProfiler {
 }
 
 impl EtwProfiler {
-    /// Avvia la cattura per `target_pid`. Gli stack vengono inviati su `tx`
-    /// (usare un canale **bounded**: il callback fa `try_send` e scarta se pieno,
-    /// per non stallare il consumer del kernel).
+    /// Avvia la cattura per `target_pid`. Stack sample (flame) e context switch
+    /// (timeline, filtrati su `target_tids`) vengono inviati su `tx` come
+    /// `EtwEvent` (canale **bounded**: il callback fa `try_send` e scarta se
+    /// pieno, per non stallare il consumer del kernel).
     ///
     /// Ritorna `Err(Permission)` se mancano i privilegi di amministratore — il
     /// chiamante prosegue in polling-only.
-    pub fn start(target_pid: u32, tx: Sender<StackSample>) -> Result<Self, ArgusError> {
+    pub fn start(
+        target_pid: u32,
+        target_tids: HashSet<u32>,
+        tx: Sender<EtwEvent>,
+    ) -> Result<Self, ArgusError> {
         // La sessione kernel con PROFILE richiede `SeSystemProfilePrivilege`
         // **abilitato** nel token: averlo (da admin) non basta. Senza, StartTrace
         // ritorna 1314 (ERROR_PRIVILEGE_NOT_HELD). Lo attiviamo qui.
@@ -248,7 +277,7 @@ impl EtwProfiler {
         let trace_c = trace.clone();
         let join = std::thread::Builder::new()
             .name("argus-etw".into())
-            .spawn(move || consume(target_pid, tx, trace_c))
+            .spawn(move || consume(target_pid, target_tids, tx, trace_c))
             .map_err(|e| ArgusError::Internal(format!("spawn thread ETW fallito: {e}")))?;
 
         info!("ETW: sessione kernel avviata, cattura stack per PID {target_pid}");
@@ -300,8 +329,17 @@ impl Drop for EtwProfiler {
 /// Corpo del thread consumer: apre il trace real-time e gira in `ProcessTrace`
 /// (bloccante) finché `CloseTrace` non lo sblocca. `ctx` (e quindi `tx`) vive
 /// sul suo stack per tutta la durata della chiamata.
-fn consume(target_pid: u32, tx: Sender<StackSample>, trace: Arc<AtomicU64>) {
-    let ctx = ConsumerCtx { target_pid, tx };
+fn consume(
+    target_pid: u32,
+    target_tids: HashSet<u32>,
+    tx: Sender<EtwEvent>,
+    trace: Arc<AtomicU64>,
+) {
+    let ctx = ConsumerCtx {
+        target_pid,
+        target_tids,
+        tx,
+    };
     let name: Vec<u16> = KERNEL_LOGGER_NAME
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -333,31 +371,46 @@ fn consume(target_pid: u32, tx: Sender<StackSample>, trace: Arc<AtomicU64>) {
     let _ = unsafe { ProcessTrace(&[handle], None, None) };
 }
 
-/// Callback ETW (ABI di sistema). Filtra gli eventi StackWalk del target, li
-/// decodifica e li invia senza bloccare (scarta se il canale è pieno).
+/// Callback ETW (ABI di sistema). Instrada gli eventi StackWalk (flame, filtrati
+/// per PID) e CSwitch (timeline, filtrati per TID del target), decodificandoli e
+/// inviandoli senza bloccare (scarta se il canale è pieno).
 unsafe extern "system" fn event_callback(record: *mut EVENT_RECORD) {
     // SAFETY (intera funzione, già contesto `unsafe`): ETW invoca la callback con
     // un `record` valido per la sua durata; `UserData` punta a `UserDataLength`
     // byte e `UserContext` è il puntatore a `ConsumerCtx` messo in
     // `logfile.Context`, vivo per tutta la `ProcessTrace`. Validiamo i null prima
-    // di dereferenziare.
+    // di dereferenziare; i campi union (ProcessorIndex) si leggono qui (unsafe).
     if record.is_null() {
         return;
     }
     let r = &*record;
-    if r.EventHeader.ProviderId != STACK_WALK_GUID {
-        return;
-    }
     let ctx = r.UserContext as *const ConsumerCtx;
     if ctx.is_null() || r.UserData.is_null() || r.UserDataLength == 0 {
         return;
     }
     let ctx = &*ctx;
     let data = std::slice::from_raw_parts(r.UserData as *const u8, r.UserDataLength as usize);
-    if let Some(sample) = parse_stack_walk(data, 8) {
-        if sample.pid == ctx.target_pid {
-            // try_send: mai bloccare il consumer del kernel; in overflow si scarta.
-            let _ = ctx.tx.try_send(sample);
+    let provider = r.EventHeader.ProviderId;
+
+    if provider == STACK_WALK_GUID {
+        if let Some(sample) = parse_stack_walk(data, 8) {
+            if sample.pid == ctx.target_pid {
+                // try_send: mai bloccare il consumer del kernel; overflow → scarta.
+                let _ = ctx.tx.try_send(EtwEvent::Stack(sample));
+            }
+        }
+    } else if provider == THREAD_GUID && r.EventHeader.EventDescriptor.Opcode == OPCODE_CSWITCH {
+        if let Some(cs) = parse_cswitch(data) {
+            // I CSwitch sono di sistema: teniamo solo quelli dei thread del target.
+            if ctx.target_tids.contains(&cs.new_tid) || ctx.target_tids.contains(&cs.old_tid) {
+                let ev = SwitchEvent {
+                    timestamp: r.EventHeader.TimeStamp as u64,
+                    cpu: r.BufferContext.Anonymous.ProcessorIndex,
+                    new_tid: cs.new_tid,
+                    old_tid: cs.old_tid,
+                };
+                let _ = ctx.tx.try_send(EtwEvent::Switch(ev));
+            }
         }
     }
 }
@@ -450,7 +503,7 @@ mod tests {
         let (tx, _rx) = crossbeam_channel::bounded(64);
         // Elevato: parte e si ferma pulito (RAII). Non elevato: `start` ritorna
         // Err e qui non entriamo. In nessun caso un panic.
-        if let Ok(mut p) = EtwProfiler::start(std::process::id(), tx) {
+        if let Ok(mut p) = EtwProfiler::start(std::process::id(), HashSet::new(), tx) {
             p.stop();
         }
     }

@@ -2,6 +2,7 @@
 //! `Snapshot` immutabili via `ArcSwap`. Riceve comandi dalla UI via canale.
 
 use crate::aggregation::flame::FlameGraph;
+use crate::aggregation::timeline::ThreadTimeline;
 use crate::aggregation::{FlameStatus, ProcessMeta, Snapshot, Status};
 use crate::capture::process::{
     image_name, list_processes, open_process, ProcessHandle, ProcessInfo,
@@ -58,6 +59,8 @@ pub struct Shared {
     /// mutato di continuo dall'aggregatore e letto dalla UI per il rendering;
     /// le sezioni critiche sono brevissime (add_stack / layout). Vedi D16.
     pub flame: Arc<Mutex<FlameGraph>>,
+    /// Timeline degli stati thread (Fase 3), popolata dai CSwitch ETW.
+    pub timeline: Arc<Mutex<ThreadTimeline>>,
     /// Elenco dei file `.argus` salvati, dal più recente (Fase 4).
     pub captures: ArcSwap<Vec<PathBuf>>,
     /// Risultato dell'ultimo confronto (diff) baseline vs corrente (Fase 4).
@@ -71,6 +74,7 @@ impl Shared {
             metrics: ArcSwap::from_pointee(Snapshot::new(num_cpus, false)),
             processes: ArcSwap::from_pointee(Vec::new()),
             flame: Arc::new(Mutex::new(FlameGraph::new())),
+            timeline: Arc::new(Mutex::new(ThreadTimeline::new())),
             captures: ArcSwap::from_pointee(Vec::new()),
             diff: ArcSwap::from_pointee(None),
         })
@@ -233,7 +237,8 @@ impl Sampler {
     /// (chiamato da `attach` dopo `stop_profiling`). Senza privilegi admin la
     /// sessione non parte: lo segnaliamo in `flame_status` e si prosegue.
     fn start_profiling(&mut self, pid: u32) {
-        match ProfilingSession::start(pid, self.shared.flame.clone()) {
+        match ProfilingSession::start(pid, self.shared.flame.clone(), self.shared.timeline.clone())
+        {
             Ok(sess) => {
                 self.profiling = Some(sess);
                 self.snap.flame_status = FlameStatus::Active;
@@ -258,6 +263,7 @@ impl Sampler {
         }
         if clear_flame {
             self.shared.flame.lock().clear();
+            self.shared.timeline.lock().clear();
         }
         self.snap.flame_status = FlameStatus::Off;
     }

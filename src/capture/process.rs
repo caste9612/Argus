@@ -6,10 +6,15 @@
 //! molto più economica che aprire un handle per ciascun processo.
 
 use crate::util::error::ArgusError;
+use crate::util::win::HandleGuard;
 use core::ffi::c_void;
+use std::mem::size_of;
 use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, HANDLE, STATUS_INFO_LENGTH_MISMATCH,
+};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
 use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 use windows::Win32::System::Threading::{
@@ -100,6 +105,40 @@ pub fn open_for_symbols(pid: u32) -> Result<ProcessHandle, ArgusError> {
         )),
         Err(e) => Err(ArgusError::Os(e)),
     }
+}
+
+/// Elenca i TID dei thread appartenenti a `pid` via snapshot Toolhelp.
+///
+/// Serve a filtrare i context-switch (Fase 3) ai thread del target: i `CSwitch`
+/// ETW non portano il PID. Best-effort: ritorna vuoto se lo snapshot fallisce.
+pub fn thread_ids(pid: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    // SAFETY: snapshot dei thread di sistema; l'handle è chiuso dall'HandleGuard.
+    // THREADENTRY32 ha `dwSize` impostato prima di ogni chiamata, come richiesto.
+    unsafe {
+        let snap = match CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
+            Ok(h) if !h.is_invalid() => h,
+            _ => return out,
+        };
+        let _guard = HandleGuard(snap);
+
+        let mut entry = THREADENTRY32 {
+            dwSize: size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        if Thread32First(snap, &mut entry).is_ok() {
+            loop {
+                if entry.th32OwnerProcessID == pid {
+                    out.push(entry.th32ThreadID);
+                }
+                entry.dwSize = size_of::<THREADENTRY32>() as u32;
+                if Thread32Next(snap, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Nome del processo dall'immagine, come fallback se non è nella lista.
@@ -220,5 +259,20 @@ fn read_image_name(p: &SYSTEM_PROCESS_INFORMATION, pid: u32) -> String {
             4 => "System".to_string(),
             _ => format!("PID {pid}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_ids_of_self_then_invalid() {
+        let tids = thread_ids(std::process::id());
+        assert!(!tids.is_empty(), "il processo corrente ha almeno un thread");
+        assert!(
+            thread_ids(0xFFFF_FFF0).is_empty(),
+            "un PID inesistente non ha thread"
+        );
     }
 }
