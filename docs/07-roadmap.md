@@ -52,7 +52,7 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 - ✅ Symbol resolution (DbgHelp wrapper RAII) con cache (2 generazioni) — `capture/symbols.rs`
 - ✅ Flame graph aggregator (tree con count incrementale) — `aggregation/flame.rs`
 - ✅ Flame graph renderer — **con il Painter di egui**, non wgpu custom (D17); sufficiente e verificabile
-- ✅ Search box (substring, non ancora regex), zoom, click-to-drill — `ui/flame.rs`
+- ✅ Search box (regex case-insensitive), zoom, click-to-drill — `ui/flame.rs`
 - ✅ Tab "Flame" nella dashboard
 - ⬜ Provider `Thread` per context switch — rinviato (è preparazione Fase 3)
 
@@ -68,9 +68,9 @@ elevato — è l'unica parte non verificabile in un ambiente non elevato.
 - ⏳ Overhead totale sul target < 1 % — *da misurare come admin*
 - 🔶 Edge cases ETW di `06-reliability.md`: "ETW fails (permessi) → polling-only + banner" ✅ verificato; gli altri da verificare come admin
 
-**Rifiniture rimaste per chiudere la fase**: ricerca regex (ora substring), risoluzione
-simboli del target *on-disk* via eventi Image/Load (ora best-effort su handle vivo, vedi D14),
-e la verifica end-to-end come amministratore.
+**Rifiniture rimaste per chiudere la fase**: risoluzione simboli del target *on-disk* via
+eventi Image/Load (ora best-effort su handle vivo, vedi D14) e la verifica end-to-end come
+amministratore.
 
 ---
 

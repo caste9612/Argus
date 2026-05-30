@@ -11,6 +11,7 @@ use crate::aggregation::flame::{FlameGraph, NodeId, ROOT};
 use crate::aggregation::{FlameStatus, Snapshot, Status};
 use eframe::egui;
 use parking_lot::Mutex;
+use regex::{Regex, RegexBuilder};
 
 /// Altezza di una riga (un livello di stack) in pixel.
 const ROW_H: f32 = 18.0;
@@ -26,7 +27,10 @@ pub fn render(
     focus: &mut NodeId,
     search: &mut String,
 ) {
-    header(ui, snap, focus, search);
+    // Filtro di ricerca: regex case-insensitive. None se vuoto o non valido.
+    let filter = compile_filter(search);
+    let invalid_regex = !search.trim().is_empty() && filter.is_none();
+    header(ui, snap, focus, search, invalid_regex);
     ui.separator();
 
     if let FlameStatus::Unavailable(reason) = &snap.flame_status {
@@ -57,12 +61,32 @@ pub fn render(
     if *focus != ROOT && g.total_of(*focus) == 0 {
         *focus = ROOT;
     }
-    if let Some(clicked) = draw_flame(ui, &g, *focus, search, total) {
+    if let Some(clicked) = draw_flame(ui, &g, *focus, filter.as_ref(), total) {
         *focus = clicked;
     }
 }
 
-fn header(ui: &mut egui::Ui, snap: &Snapshot, focus: &mut NodeId, search: &mut String) {
+/// Compila il testo di ricerca in una regex case-insensitive. Ritorna `None` se
+/// è vuoto o non è una regex valida (in tal caso non si filtra nulla).
+fn compile_filter(query: &str) -> Option<Regex> {
+    let q = query.trim();
+    if q.is_empty() {
+        return None;
+    }
+    RegexBuilder::new(q)
+        .case_insensitive(true)
+        .size_limit(1 << 20) // limite anti-regex patologiche
+        .build()
+        .ok()
+}
+
+fn header(
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    focus: &mut NodeId,
+    search: &mut String,
+    invalid_regex: bool,
+) {
     ui.horizontal(|ui| {
         ui.heading("Flame graph");
         ui.separator();
@@ -80,9 +104,12 @@ fn header(ui: &mut egui::Ui, snap: &Snapshot, focus: &mut NodeId, search: &mut S
         ui.separator();
         ui.add(
             egui::TextEdit::singleline(search)
-                .hint_text("evidenzia funzione…")
+                .hint_text("cerca (regex)…")
                 .desired_width(200.0),
         );
+        if invalid_regex {
+            ui.colored_label(egui::Color32::from_rgb(255, 107, 107), "regex non valida");
+        }
         if ui
             .button("⟲ zoom out")
             .on_hover_text("Torna alla radice")
@@ -98,12 +125,11 @@ fn draw_flame(
     ui: &mut egui::Ui,
     g: &FlameGraph,
     focus: NodeId,
-    search: &str,
+    filter: Option<&Regex>,
     total: u64,
 ) -> Option<NodeId> {
     let rects = g.layout(focus);
     let max_depth = rects.iter().map(|r| r.depth).max().unwrap_or(0);
-    let query = search.trim().to_lowercase();
 
     let mut clicked = None;
     egui::ScrollArea::vertical()
@@ -130,8 +156,8 @@ fn draw_flame(
                 );
 
                 let name = g.name_of(r.node);
-                let matched = !query.is_empty() && name.to_lowercase().contains(&query);
-                let dim = !query.is_empty() && !matched;
+                let matched = filter.is_some_and(|re| re.is_match(name));
+                let dim = filter.is_some() && !matched;
                 let fill = frame_color(name, dim, matched);
                 painter.rect_filled(cell, egui::Rounding::same(2.0), fill);
 
@@ -254,4 +280,29 @@ fn info_center(ui: &mut egui::Ui, msg: &str) {
     ui.vertical_centered(|ui| {
         ui.label(msg);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_compiles_and_matches_case_insensitive() {
+        assert!(compile_filter("").is_none(), "vuoto = nessun filtro");
+        assert!(
+            compile_filter("   ").is_none(),
+            "solo spazi = nessun filtro"
+        );
+        assert!(
+            compile_filter("[invalid").is_none(),
+            "regex invalida = nessun filtro"
+        );
+
+        let re = compile_filter("Rtl.*Thread").expect("regex valida");
+        assert!(re.is_match("ntdll.dll!RtlUserThreadStart"));
+        // Case-insensitive: minuscolo combacia comunque.
+        let re2 = compile_filter("MAIN").expect("regex valida");
+        assert!(re2.is_match("argus.exe!main"));
+        assert!(!re2.is_match("kernel32.dll!BaseThreadInitThunk"));
+    }
 }
