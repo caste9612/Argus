@@ -10,8 +10,10 @@ ne mostra in tempo reale CPU, RAM (working set + private), I/O, thread e handle,
 con dashboard GPU e lista processi raggruppata/ordinabile. Build, clippy e test
 (2 unit + 3 integration) verdi.
 
-**Prossimo**: Fase 2 — ETW + flame graph (il pezzo che mostra *dove* il codice
-spende tempo). Vedi [`07-roadmap.md`](07-roadmap.md).
+**Fase 2 — ETW + flame graph: in corso.** Prima tappa fatta: la struttura dati
+del flame graph (`aggregation/flame.rs`, albero pesato puro e testato, vedi D13).
+Prossimo: symbol resolution (DbgHelp) e sessione ETW per gli stack sample.
+Vedi [`07-roadmap.md`](07-roadmap.md).
 
 ## Decisioni
 
@@ -87,6 +89,24 @@ Così i test d'integrazione in `tests/` usano `argus::...` e un binario
 `src/bin/fixture.rs` con carico deterministico (brucia CPU, alloca, spawna
 thread) fa da bersaglio reale. **Conseguenza**: validazione end-to-end del path
 Win32 senza mock.
+
+### D13 — Flame graph: albero puro keyed-by-nome, layout senza ricorsione
+La struttura dati del flame graph (`aggregation/flame.rs`) è **pura**: aggrega
+stack di *nomi di frame già risolti*, senza toccare Win32. Questo la disaccoppia
+dal layer simboli (che mappa indirizzo→nome) e la rende interamente testabile
+senza ETW né privilegi. Scelte:
+- **Ordine stack root→leaf** (frame più esterno per primo): è l'ordine naturale
+  del disegno; il layer ETW invertirà se serve.
+- **Interning dei nomi** (`name_id: u32`) + una sola mappa `(genitore, name) →
+  figlio` per tutto l'albero, invece di una HashMap per nodo: meno allocazioni.
+- **Figli in ordine di prima comparsa**: stabile tra un update e l'altro, così i
+  frame non saltano lateralmente mentre i contatori crescono live. Ordinamento
+  per valore/alfabetico è un affinamento UI futuro.
+- **Layout con work-stack esplicito** (niente ricorsione): robusto anche per
+  stack patologicamente profondi (no-panic policy). Il focus si espande a piena
+  larghezza con la catena di antenati per il drill-down/zoom.
+**Conseguenza**: il rendering (egui o wgpu) consuma solo `layout(focus) →
+Vec<Rect>` + accessor di lettura; nessuna logica di profiling nella UI.
 
 ## Questioni aperte
 

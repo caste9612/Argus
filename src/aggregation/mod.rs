@@ -1,8 +1,11 @@
 //! Layer 3 — Aggregation.
 //!
-//! In Fase 1 il polling produce già valori scalari, quindi qui vive solo lo
-//! stato time-series (`Snapshot`) e gli helper sulle storie. L'aggregatore come
-//! thread separato arriverà in Fase 2 con gli eventi ETW ad alta frequenza.
+//! In Fase 1 il polling produce già valori scalari, quindi qui vive lo stato
+//! time-series (`Snapshot`) e gli helper sulle storie. In Fase 2 si aggiunge il
+//! flame graph (`flame`), che aggrega gli stack sample ETW in un albero pesato.
+//! L'aggregatore come thread separato arriverà con gli eventi ad alta frequenza.
+
+pub mod flame;
 
 use std::collections::VecDeque;
 
