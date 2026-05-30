@@ -94,10 +94,11 @@ tests/integration.rs     # test end-to-end del capture contro il fixture
 ```
 
 > **Stato implementazione**: esistono `main.rs`, `lib.rs`, `app.rs`,
-> `capture/{process,sampler}.rs`, `aggregation/mod.rs`,
+> `capture/{process,sampler,symbols}.rs`, `aggregation/{mod,flame}.rs`,
 > `ui/{mod,dashboard,process_list,kpi}.rs`, `util/{error,win}.rs`, più
-> `src/bin/fixture.rs` e `tests/integration.rs`. I file marcati *(Fase 2)* e
-> l'intero `viz/` non sono ancora creati.
+> `src/bin/fixture.rs` e `tests/integration.rs`. In Fase 2 sono già pronti il
+> flame graph (`aggregation/flame.rs`) e la symbol resolution
+> (`capture/symbols.rs`); restano da creare `capture/etw.rs` e l'intero `viz/`.
 
 ## Flusso dati: vita di una metrica CPU (Fase 1)
 

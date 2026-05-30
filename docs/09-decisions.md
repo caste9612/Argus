@@ -108,6 +108,25 @@ senza ETW né privilegi. Scelte:
 **Conseguenza**: il rendering (egui o wgpu) consuma solo `layout(focus) →
 Vec<Rect>` + accessor di lettura; nessuna logica di profiling nella UI.
 
+### D14 — Symbol resolution: DbgHelp RAII, cache a 2 generazioni, fallback
+`capture/symbols.rs` avvolge DbgHelp (`SymInitializeW`/`SymFromAddrW`/
+`SymGetModuleInfoW64`/`SymCleanup`) in un tipo RAII. DbgHelp **non è
+thread-safe**: il resolver è posseduto da un solo thread (l'aggregatore).
+Scelte:
+- **Mai panic, mai nome inventato**: se la risoluzione fallisce si ripiega su
+  `modulo!0xADDR` o `0xADDR` (graceful degradation, docs/06-reliability.md).
+- **Cache a due generazioni** (hot/cold) invece di un LRU con liste intrusive:
+  memoria limitata a ~2×cap, O(1), gli indirizzi caldi sopravvivono alla
+  rotazione. Niente dipendenza `lru`.
+- **Risoluzione del target**: la strategia definitiva sarà *on-disk* — caricare
+  i moduli (`SymLoadModuleExW`) dai path/base degli eventi ETW Image/Load,
+  invece di leggere la memoria del target vivo. Più robusto (funziona anche dopo
+  l'uscita del processo) e non richiede `PROCESS_VM_READ`, mantenendo l'attach
+  minimale di D10. Il resolver è comunque già in grado di operare su un handle
+  vivo (`invade = true`), come fanno i test che risolvono sé stessi.
+**Conseguenza**: l'attach di Fase 1 resta invariato; la decisione su come/quando
+aprire i moduli del target si concretizza con la sessione ETW.
+
 ## Questioni aperte
 
 - **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto
