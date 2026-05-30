@@ -7,6 +7,7 @@ use crate::capture::process::{
     image_name, list_processes, open_process, ProcessHandle, ProcessInfo,
 };
 use crate::capture::profiling::ProfilingSession;
+use crate::diff::{self, DiffSummary};
 use crate::export::{self, ExportKind};
 use crate::persist::{self, Capture};
 use crate::util::error::ArgusError;
@@ -44,6 +45,8 @@ pub enum Command {
     RefreshCaptures,
     /// Esporta la sessione corrente (CSV / folded stacks / SVG) (Fase 4).
     Export(ExportKind),
+    /// Confronta la sessione corrente con una baseline `.argus` (Fase 4).
+    DiffCapture(PathBuf),
     Shutdown,
 }
 
@@ -57,6 +60,8 @@ pub struct Shared {
     pub flame: Arc<Mutex<FlameGraph>>,
     /// Elenco dei file `.argus` salvati, dal più recente (Fase 4).
     pub captures: ArcSwap<Vec<PathBuf>>,
+    /// Risultato dell'ultimo confronto (diff) baseline vs corrente (Fase 4).
+    pub diff: ArcSwap<Option<DiffSummary>>,
 }
 
 impl Shared {
@@ -67,6 +72,7 @@ impl Shared {
             processes: ArcSwap::from_pointee(Vec::new()),
             flame: Arc::new(Mutex::new(FlameGraph::new())),
             captures: ArcSwap::from_pointee(Vec::new()),
+            diff: ArcSwap::from_pointee(None),
         })
     }
 }
@@ -156,6 +162,10 @@ impl Sampler {
             Command::RefreshCaptures => self.refresh_captures(),
             Command::Export(kind) => {
                 self.export_session(kind);
+                self.publish();
+            }
+            Command::DiffCapture(baseline) => {
+                self.diff_capture(baseline);
                 self.publish();
             }
             Command::Shutdown => {} // gestito nel loop
@@ -274,6 +284,29 @@ impl Sampler {
             Err(e) => {
                 warn!("salvataggio sessione fallito: {e}");
                 self.snap.notice = Some(format!("Salvataggio fallito: {e}"));
+            }
+        }
+    }
+
+    /// Confronta una baseline `.argus` con la sessione corrente e pubblica il
+    /// risultato per la tab Diff.
+    fn diff_capture(&mut self, baseline: PathBuf) {
+        match persist::load_capture_file(&baseline) {
+            Ok(a) => {
+                let b = {
+                    let flame = self.shared.flame.lock();
+                    Capture::from_live(&self.snap, &flame, env!("CARGO_PKG_VERSION"))
+                };
+                let summary = diff::diff(&a, &b);
+                self.shared.diff.store(Arc::new(Some(summary)));
+                self.snap.notice = Some(format!(
+                    "Diff pronto: baseline «{}» vs sessione corrente — apri la tab Diff",
+                    a.process_name
+                ));
+            }
+            Err(e) => {
+                warn!("diff fallito: {e}");
+                self.snap.notice = Some(format!("Diff fallito: {e}"));
             }
         }
     }

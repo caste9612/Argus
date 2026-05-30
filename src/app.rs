@@ -46,6 +46,7 @@ impl eframe::App for ArgusApp {
         let snap = self.shared.metrics.load_full();
         let procs = self.shared.processes.load_full();
         let captures = self.shared.captures.load_full();
+        let diff = self.shared.diff.load_full();
 
         self.cmd_buf.clear();
         ui::render(
@@ -55,6 +56,7 @@ impl eframe::App for ArgusApp {
             &procs,
             &self.shared.flame,
             &captures,
+            (*diff).as_ref(),
             &mut self.cmd_buf,
         );
         for cmd in self.cmd_buf.drain(..) {

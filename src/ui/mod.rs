@@ -5,6 +5,7 @@
 //! Nessun accesso diretto a Win32 o ai canali qui dentro.
 
 mod dashboard;
+mod diff_view;
 mod flame;
 mod kpi;
 mod process_list;
@@ -13,6 +14,7 @@ use crate::aggregation::flame::{FlameGraph, NodeId};
 use crate::aggregation::{Snapshot, Status};
 use crate::capture::process::ProcessInfo;
 use crate::capture::sampler::Command;
+use crate::diff::DiffSummary;
 use crate::export::ExportKind;
 use eframe::egui;
 use parking_lot::Mutex;
@@ -24,6 +26,7 @@ pub enum Tab {
     #[default]
     Dashboard,
     Flame,
+    Diff,
 }
 
 /// Criterio di ordinamento secondario della lista processi (il raggruppamento
@@ -59,6 +62,7 @@ pub fn render(
     procs: &[ProcessInfo],
     flame: &Mutex<FlameGraph>,
     captures: &[PathBuf],
+    diff: Option<&DiffSummary>,
     out: &mut Vec<Command>,
 ) {
     top_bar(ctx, snap, captures, out);
@@ -67,6 +71,7 @@ pub fn render(
         ui.horizontal(|ui| {
             ui.selectable_value(&mut state.tab, Tab::Dashboard, "📊 Metriche");
             ui.selectable_value(&mut state.tab, Tab::Flame, "🔥 Flame graph");
+            ui.selectable_value(&mut state.tab, Tab::Diff, "⇄ Diff");
         });
         ui.separator();
         match state.tab {
@@ -78,6 +83,7 @@ pub fn render(
                 &mut state.flame_focus,
                 &mut state.flame_search,
             ),
+            Tab::Diff => diff_view::render(ui, diff),
         }
     });
 }
@@ -186,6 +192,25 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut
                     if ui.button("SVG (flame graph)").clicked() {
                         out.push(Command::Export(ExportKind::Svg));
                         ui.close_menu();
+                    }
+                });
+            });
+            ui.add_enabled_ui(has_data, |ui| {
+                ui.menu_button("⇄ Confronta", |ui| {
+                    out.push(Command::RefreshCaptures);
+                    ui.label("Baseline da confrontare con la sessione corrente:");
+                    if captures.is_empty() {
+                        ui.weak("Nessuna sessione salvata.");
+                    }
+                    for path in captures {
+                        let label = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("(senza nome)");
+                        if ui.button(label).clicked() {
+                            out.push(Command::DiffCapture(path.clone()));
+                            ui.close_menu();
+                        }
                     }
                 });
             });
