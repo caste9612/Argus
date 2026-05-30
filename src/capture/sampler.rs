@@ -7,6 +7,7 @@ use crate::capture::process::{
     image_name, list_processes, open_process, ProcessHandle, ProcessInfo,
 };
 use crate::capture::profiling::ProfilingSession;
+use crate::export::{self, ExportKind};
 use crate::persist::{self, Capture};
 use crate::util::error::ArgusError;
 use crate::util::win::{filetime_to_u64, logical_cpu_count};
@@ -41,6 +42,8 @@ pub enum Command {
     OpenCapture(PathBuf),
     /// Rinfresca l'elenco dei file `.argus` salvati.
     RefreshCaptures,
+    /// Esporta la sessione corrente (CSV / folded stacks / SVG) (Fase 4).
+    Export(ExportKind),
     Shutdown,
 }
 
@@ -151,6 +154,10 @@ impl Sampler {
                 self.publish();
             }
             Command::RefreshCaptures => self.refresh_captures(),
+            Command::Export(kind) => {
+                self.export_session(kind);
+                self.publish();
+            }
             Command::Shutdown => {} // gestito nel loop
         }
     }
@@ -267,6 +274,29 @@ impl Sampler {
             Err(e) => {
                 warn!("salvataggio sessione fallito: {e}");
                 self.snap.notice = Some(format!("Salvataggio fallito: {e}"));
+            }
+        }
+    }
+
+    /// Esporta la sessione corrente nel formato richiesto.
+    fn export_session(&mut self, kind: ExportKind) {
+        let cap = {
+            let flame = self.shared.flame.lock();
+            Capture::from_live(&self.snap, &flame, env!("CARGO_PKG_VERSION"))
+        };
+        let content = match kind {
+            ExportKind::Csv => export::to_csv(&cap),
+            ExportKind::Folded => export::to_folded(&cap.flame),
+            ExportKind::Svg => export::to_svg(&cap.flame),
+        };
+        match persist::save_export(&cap.process_name, kind.extension(), &content) {
+            Ok(path) => {
+                info!("export in {path:?}");
+                self.snap.notice = Some(format!("Esportato: {}", path.display()));
+            }
+            Err(e) => {
+                warn!("export fallito: {e}");
+                self.snap.notice = Some(format!("Export fallito: {e}"));
             }
         }
     }

@@ -217,45 +217,18 @@ fn tooltip(ui: &egui::Ui, g: &FlameGraph, node: NodeId, total: u64) {
     });
 }
 
-/// Colore stabile per funzione (hash del nome → tinta calda), attenuabile per la
-/// ricerca. Tinte calde (rosso-arancio-giallo) per il classico look "fiamma".
+/// Colore stabile per funzione, attenuato per i frame non-match della ricerca.
+/// La tinta (calda, look "fiamma") è condivisa con l'export SVG via `util::color`.
 fn frame_color(name: &str, dim: bool, matched: bool) -> egui::Color32 {
-    // FNV-1a per una tinta stabile e ben distribuita sul nome.
-    let mut h: u32 = 2_166_136_261;
-    for b in name.bytes() {
-        h = (h ^ b as u32).wrapping_mul(16_777_619);
-    }
-    let hue = 18.0 + (h % 38) as f32; // 18..56 gradi: arancio→giallo
-    let sat = 0.55 + ((h >> 9) & 0xff) as f32 / 255.0 * 0.25; // 0.55..0.80
-    let val = if dim {
+    let value = if dim {
         0.32
     } else if matched {
         0.95
     } else {
         0.82
     };
-    hsv(hue, sat, val)
-}
-
-/// Conversione HSV→Color32 (h in gradi 0..360). Evita dipendenze esterne.
-fn hsv(h: f32, s: f32, v: f32) -> egui::Color32 {
-    let c = v * s;
-    let hp = h / 60.0;
-    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
-    let (r, g, b) = match hp as i32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = v - c;
-    egui::Color32::from_rgb(
-        ((r + m) * 255.0) as u8,
-        ((g + m) * 255.0) as u8,
-        ((b + m) * 255.0) as u8,
-    )
+    let (r, g, b) = crate::util::color::frame_rgb(name, value);
+    egui::Color32::from_rgb(r, g, b)
 }
 
 fn banner(ui: &mut egui::Ui, reason: &str) {

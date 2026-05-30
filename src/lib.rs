@@ -7,6 +7,7 @@
 pub mod aggregation;
 pub mod app;
 pub mod capture;
+pub mod export;
 pub mod persist;
 pub mod ui;
 pub mod util;

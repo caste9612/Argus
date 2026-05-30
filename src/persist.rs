@@ -98,10 +98,37 @@ impl Capture {
     }
 }
 
+/// Sottocartella dati di Argus: `%LOCALAPPDATA%\Argus\<sub>`.
+fn data_subdir(sub: &str) -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA")?;
+    Some(Path::new(&local).join("Argus").join(sub))
+}
+
 /// Cartella dei salvataggi: `%LOCALAPPDATA%\Argus\captures`.
 pub fn captures_dir() -> Option<PathBuf> {
-    let local = std::env::var_os("LOCALAPPDATA")?;
-    Some(Path::new(&local).join("Argus").join("captures"))
+    data_subdir("captures")
+}
+
+/// Cartella degli export: `%LOCALAPPDATA%\Argus\exports`.
+pub fn exports_dir() -> Option<PathBuf> {
+    data_subdir("exports")
+}
+
+/// Scrive un export testuale (CSV/folded/SVG) con nome auto-generato e la data
+/// estensione; ritorna il percorso. Mai panic: gli errori di I/O → `ArgusError`.
+pub fn save_export(process_name: &str, ext: &str, content: &str) -> Result<PathBuf, ArgusError> {
+    let dir =
+        exports_dir().ok_or_else(|| ArgusError::Internal("LOCALAPPDATA non disponibile".into()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ArgusError::Internal(format!("impossibile creare {dir:?}: {e}")))?;
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("{}-{secs}.{ext}", sanitize(process_name)));
+    std::fs::write(&path, content)
+        .map_err(|e| ArgusError::Internal(format!("scrittura di {path:?} fallita: {e}")))?;
+    Ok(path)
 }
 
 /// Salva la `Capture` in un file `.argus` con nome auto-generato; ritorna il

@@ -13,6 +13,7 @@ use crate::aggregation::flame::{FlameGraph, NodeId};
 use crate::aggregation::{Snapshot, Status};
 use crate::capture::process::ProcessInfo;
 use crate::capture::sampler::Command;
+use crate::export::ExportKind;
 use eframe::egui;
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -171,6 +172,22 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut
                         ui.close_menu();
                     }
                 }
+            });
+            ui.add_enabled_ui(has_data, |ui| {
+                ui.menu_button("⬇ Esporta", |ui| {
+                    if ui.button("CSV (metriche)").clicked() {
+                        out.push(Command::Export(ExportKind::Csv));
+                        ui.close_menu();
+                    }
+                    if ui.button("Folded stacks (speedscope)").clicked() {
+                        out.push(Command::Export(ExportKind::Folded));
+                        ui.close_menu();
+                    }
+                    if ui.button("SVG (flame graph)").clicked() {
+                        out.push(Command::Export(ExportKind::Svg));
+                        ui.close_menu();
+                    }
+                });
             });
         });
 
