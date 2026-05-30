@@ -30,7 +30,9 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use tracing::{info, warn};
 use windows::core::{GUID, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_SUCCESS};
+use windows::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_PRIVILEGE_NOT_HELD, ERROR_SUCCESS,
+};
 use windows::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, OpenTraceW, ProcessTrace, StartTraceW, TraceSetInformation,
     TraceStackTracingInfo, CLASSIC_EVENT_ID, CONTROLTRACE_HANDLE, EVENT_RECORD,
@@ -179,6 +181,11 @@ impl EtwProfiler {
     /// Ritorna `Err(Permission)` se mancano i privilegi di amministratore — il
     /// chiamante prosegue in polling-only.
     pub fn start(target_pid: u32, tx: Sender<StackSample>) -> Result<Self, ArgusError> {
+        // La sessione kernel con PROFILE richiede `SeSystemProfilePrivilege`
+        // **abilitato** nel token: averlo (da admin) non basta. Senza, StartTrace
+        // ritorna 1314 (ERROR_PRIVILEGE_NOT_HELD). Lo attiviamo qui.
+        let _ = crate::util::win::enable_privilege("SeSystemProfilePrivilege");
+
         let mut props = KernelTraceProps::new(true);
         let mut control = CONTROLTRACE_HANDLE::default();
 
@@ -191,7 +198,7 @@ impl EtwProfiler {
                 props.as_props_ptr(),
             )
         };
-        if status == ERROR_ACCESS_DENIED {
+        if status == ERROR_ACCESS_DENIED || status == ERROR_PRIVILEGE_NOT_HELD {
             return Err(ArgusError::Permission {
                 hint: "La cattura ETW (flame graph) richiede privilegi di \
                        amministratore. Rilancia Argus come amministratore per \

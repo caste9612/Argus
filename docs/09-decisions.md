@@ -17,9 +17,10 @@ graph puro (`aggregation/flame.rs`, D13), symbol resolution DbgHelp con cache
 (`capture/etw.rs`, D15), aggregatore ETW→simboli→flame (`capture/profiling.rs`,
 D16), tab "Flame graph" interattiva col Painter di egui (`ui/flame.rs`, D17).
 L'app gira e mostra il degrado graceful "ETW non disponibile" senza admin
-(verificato a video). **La cattura ETW reale richiede privilegi di
-amministratore e va collaudata con un run elevato** — vedi handoff in
-[`07-roadmap.md`](07-roadmap.md).
+(verificato a video). **Cattura ETW live verificata come amministratore** (D20,
+`tests/etw_live.rs`): 7690 stack reali dal fixture, ordine leaf-first. Restano i
+nomi funzione del target (on-disk, D14), la misura overhead e la resa flame a
+video — vedi handoff in [`07-roadmap.md`](07-roadmap.md).
 
 **Fase 4 — recording/diff/export: completata.** Formato `.argus` (D18),
 record/replay (D19), diff tra capture (`diff.rs`, tab Diff), export
@@ -221,6 +222,23 @@ Salva/apri sessione (Fase 4) senza dialog nativo:
 - **notice**: campo transitorio nello `Snapshot` per il feedback UI
   (salvato/caricato/errore).
 **Conseguenza**: record/replay completo, zero nuove dipendenze.
+
+### D20 — La sessione ETW PROFILE richiede `SeSystemProfilePrivilege` abilitato
+Scoperto col **test live elevato** (`tests/etw_live.rs`): da amministratore,
+`StartTrace` del kernel logger con `EVENT_TRACE_FLAG_PROFILE` ritornava **1314
+(ERROR_PRIVILEGE_NOT_HELD)**. *Avere* il privilegio (come admin) non basta: va
+**abilitato** nel token via `AdjustTokenPrivileges`, come `SeDebugPrivilege`.
+Fix: `enable_privilege(name)` generico in `util/win.rs`, e `EtwProfiler::start`
+chiama `enable_privilege("SeSystemProfilePrivilege")` prima di `StartTrace` (e
+mappa 1314 → `Permission`). **Verificato end-to-end** (run elevato): 7690 stack
+reali catturati dal fixture, tutti del PID target, profondità fino a 99, flame
+costruito. **Ordine confermato leaf-first** (`frames[0]`=foglia,
+`frames[ultimo]`=`ntdll!RtlUserThreadStart`) → il `.rev()` in `profiling.rs` è
+corretto, flame orientato bene. Simboli: moduli di sistema risolti coi nomi
+(ntdll/kernel32); i nomi funzione del *target* richiedono l'approccio on-disk
+(D14) — ora si vede `modulo!0xADDR` (degrado graceful).
+**Conseguenza**: la cattura ETW live funziona da admin; coperta da un test
+d'integrazione `#[ignore]`d ri-eseguibile elevato.
 
 ## Questioni aperte
 

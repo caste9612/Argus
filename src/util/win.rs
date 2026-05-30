@@ -41,11 +41,12 @@ pub fn logical_cpu_count() -> u32 {
     }
 }
 
-/// Tenta di abilitare `SeDebugPrivilege` per il processo corrente.
+/// Tenta di abilitare un privilegio (per nome) nel token del processo corrente.
 ///
-/// Ha effetto solo se Argus gira come amministratore; altrimenti è un no-op
-/// innocuo. Ritorna `true` se il privilegio è stato effettivamente concesso.
-pub fn enable_debug_privilege() -> bool {
+/// Ha effetto solo se il processo ha quel privilegio assegnato (es. da
+/// amministratore); altrimenti è un no-op innocuo. Ritorna `true` se il
+/// privilegio è stato effettivamente abilitato.
+pub fn enable_privilege(name: &str) -> bool {
     // SAFETY: sequenza standard OpenProcessToken → LookupPrivilegeValue →
     // AdjustTokenPrivileges. Il token è chiuso dall'HandleGuard. Tutti i puntatori
     // passati sono a variabili locali vive per la durata delle chiamate.
@@ -62,11 +63,11 @@ pub fn enable_debug_privilege() -> bool {
         }
         let _guard = HandleGuard(token);
 
-        let name: Vec<u16> = "SeDebugPrivilege\0".encode_utf16().collect();
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         let mut luid = LUID::default();
         if LookupPrivilegeValueW(
             windows::core::PCWSTR::null(),
-            windows::core::PCWSTR(name.as_ptr()),
+            windows::core::PCWSTR(wide.as_ptr()),
             &mut luid,
         )
         .is_err()
@@ -89,4 +90,9 @@ pub fn enable_debug_privilege() -> bool {
         // privilegio: ERROR_NOT_ALL_ASSIGNED (1300) lo segnala. 0 = concesso.
         GetLastError().0 == 0
     }
+}
+
+/// Abilita `SeDebugPrivilege` (accesso esteso ai processi). Utile solo da admin.
+pub fn enable_debug_privilege() -> bool {
+    enable_privilege("SeDebugPrivilege")
 }

@@ -62,15 +62,14 @@ gira mostrando il flame graph e il degrado graceful "ETW non disponibile" senza 
 elevato — è l'unica parte non verificabile in un ambiente non elevato.
 
 **DoD**:
-- ⏳ Attacchi a un processo CPU-bound, vedi il flame graph popolarsi entro 10 s — *da verificare come admin*
-- ✅/⏳ Click su un frame zooma correttamente — logica di layout/focus unit-testata; resa visiva da verificare con dati reali
-- ⏳ Symbol resolution funziona per binari con `.pdb` (locale o symbol server) — *da verificare come admin*
+- ✅ Attacchi a un processo CPU-bound, vedi il flame popolarsi — **verificato** (run elevato, `tests/etw_live.rs`): 7690 stack reali dal fixture, profondità fino a 99, ordine leaf-first confermato → flame orientato bene (vedi D20)
+- ✅/⏳ Click su un frame zooma — logica layout/focus unit-testata; resa visiva con dati reali da provare a video da admin
+- 🔶 Symbol resolution: moduli di sistema risolti coi nomi (ntdll/kernel32); **nomi funzione del target** da migliorare con l'approccio on-disk (D14) — ora `modulo!0xADDR`
 - ⏳ Overhead totale sul target < 1 % — *da misurare come admin*
-- 🔶 Edge cases ETW di `06-reliability.md`: "ETW fails (permessi) → polling-only + banner" ✅ verificato; gli altri da verificare come admin
+- ✅ Edge cases ETW di `06-reliability.md`: "ETW fails (permessi) → polling-only + banner" verificato (no-admin) **e** cattura live verificata (admin)
 
-**Rifiniture rimaste per chiudere la fase**: risoluzione simboli del target *on-disk* via
-eventi Image/Load (ora best-effort su handle vivo, vedi D14) e la verifica end-to-end come
-amministratore.
+**Rifiniture rimaste**: nomi funzione del target via risoluzione *on-disk* (eventi Image/Load,
+D14); misura overhead; resa visiva del flame con dati reali a video.
 
 ---
 
@@ -148,14 +147,14 @@ Stato sintetico a fine del lavoro autonomo. **Verde = fatto e verificato**
 - **Fase 3** fondamenta: parser `CSwitch` + struttura dati timeline.
 - 40 unit + 3 integration test verdi, clippy/fmt puliti, release 10.62 MB.
 
-### 🔴 Da verificare come **amministratore** (l'unica cosa che non potevo fare)
-La cattura ETW kernel richiede privilegi elevati; senza, l'app degrada con grazia.
-Da collaudare con un run elevato:
-1. **Flame graph live (Fase 2)**: attacca un processo CPU-bound → il flame si popola
-   entro ~10 s; verifica nomi simboli, zoom, e l'**ordine dei frame** (assunto
-   leaf-first in `capture/profiling.rs`; se capovolto, invertire lì).
-2. **Overhead** sul target < 1 % (misurare con/senza Argus).
-3. **Replay/diff con dati reali**: salva una sessione con flame popolato, riapri/confronta.
+### ✅ Cattura ETW live — VERIFICATA come amministratore
+Con il fix del privilegio (D20) la pipeline ETW è stata collaudata end-to-end con un run
+elevato (`tests/etw_live.rs`, ri-eseguibile: `cargo test --test etw_live -- --ignored`):
+7690 stack reali dal fixture, tutti del target, ordine leaf-first confermato → flame
+orientato bene. Resta da provare **a video** la resa del flame nella GUI con un processo
+reale (apri la tab Flame come admin) e da **misurare l'overhead** (< 1 %). I **nomi
+funzione del target** richiedono ancora l'approccio on-disk (D14): ora si vede
+`modulo!0xADDR`.
 
 ### ⬜ Da implementare per chiudere le fasi (con indicazioni)
 - **Fase 2 rifinitura**: risoluzione simboli del target *on-disk* via eventi ETW
