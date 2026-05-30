@@ -127,6 +127,26 @@ Scelte:
 **Conseguenza**: l'attach di Fase 1 resta invariato; la decisione su come/quando
 aprire i moduli del target si concretizza con la sessione ETW.
 
+### D15 — Sessione ETW: NT Kernel Logger, real-time, consumer thread, drop-on-full
+La cattura degli stack sample (`capture/etw.rs`, `EtwProfiler`) usa la sessione
+kernel classica "NT Kernel Logger": `StartTraceW` con `EVENT_TRACE_FLAG_PROFILE`
++ `TraceSetInformation(TraceStackTracingInfo)` per lo stack-walk dell'evento
+`SampleProfile`, consumata in real-time da un thread dedicato (`ProcessTrace`).
+Scelte:
+- **Degrado graceful**: senza admin `StartTraceW` dà `ACCESS_DENIED` →
+  `start()` ritorna `Err(Permission)` con suggerimento; Argus prosegue in
+  polling-only (no panic, no retry-loop). Coperto da test (no-admin).
+- **`try_send` nel callback**: il callback ETW gira sul consumer del kernel e
+  **non deve mai bloccare**; in overflow del canale (bounded) lo stack si scarta.
+- **Stop pulito**: `CloseTrace` sblocca `ProcessTrace`, poi `ControlTraceW(STOP)`
+  e join del thread (RAII su Drop).
+- **Parsing isolato e testato**: il decode binario (`parse_stack_walk`) è puro e
+  coperto da unit test con buffer sintetici (la parte più bug-prone).
+- **Verifica**: la cattura *live* richiede admin e **non è verificabile nei test
+  non elevati** — va collaudata a mano come amministratore (vedi `07-roadmap.md`
+  DoD Fase 2). Il codice compila, l'`unsafe` è isolato/commentato e il path di
+  fallback è testato.
+
 ## Questioni aperte
 
 - **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto

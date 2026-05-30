@@ -10,16 +10,35 @@
 //! La sessione ETW kernel-level richiede privilegi di **amministratore** e non è
 //! verificabile in test automatici non elevati. Per questo il modulo è diviso:
 //!
-//! - **Parte pura, testabile** (questo file, sotto): decodifica del payload
-//!   binario degli eventi (`parse_stack_walk`) e i tipi/costanti. È la logica
-//!   più soggetta a bug (offset, endianness, dimensione puntatore) ed è coperta
-//!   da unit test con buffer sintetici — nessun admin, nessun evento reale.
-//! - **Glue della sessione** (in arrivo): `StartTraceW` + stack-tracing +
-//!   `ProcessTrace`. Codice `unsafe` isolato, che degrada con grazia se la
-//!   sessione non parte (manca admin) → Argus continua in polling-only con un
-//!   banner (docs/06-reliability.md).
+//! - **Parte pura, testabile**: decodifica del payload binario degli eventi
+//!   (`parse_stack_walk`) e i tipi/costanti. È la logica più soggetta a bug
+//!   (offset, endianness, dimensione puntatore) ed è coperta da unit test con
+//!   buffer sintetici — nessun admin, nessun evento reale.
+//! - **Glue della sessione** (`EtwProfiler`): `StartTraceW` + stack-tracing +
+//!   `ProcessTrace` su un thread consumer. Codice `unsafe` isolato che degrada
+//!   con grazia: se la sessione non parte (manca admin), `start` ritorna `Err`
+//!   e Argus prosegue in polling-only con un banner (docs/06-reliability.md).
+//!   **Il path di cattura live va verificato manualmente con privilegi elevati**
+//!   (vedi `docs/06-reliability.md`, edge case ETW di Fase 2).
 
-use windows::core::GUID;
+use crate::util::error::ArgusError;
+use crossbeam_channel::Sender;
+use std::ffi::c_void;
+use std::mem::size_of;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use tracing::{info, warn};
+use windows::core::{GUID, PCWSTR, PWSTR};
+use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_SUCCESS};
+use windows::Win32::System::Diagnostics::Etw::{
+    CloseTrace, ControlTraceW, OpenTraceW, ProcessTrace, StartTraceW, TraceSetInformation,
+    TraceStackTracingInfo, CLASSIC_EVENT_ID, CONTROLTRACE_HANDLE, EVENT_RECORD,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_PROFILE, EVENT_TRACE_LOGFILEW,
+    EVENT_TRACE_LOGFILEW_0, EVENT_TRACE_LOGFILEW_1, EVENT_TRACE_PROPERTIES,
+    EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
+    PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
+};
 
 /// GUID di controllo del kernel logger (è il `Wnode.Guid` della sessione di
 /// sistema "NT Kernel Logger").
@@ -35,6 +54,9 @@ pub const STACK_WALK_GUID: GUID = GUID::from_u128(0xdef2fe46_7bd6_4b80_bd94_f57f
 /// Opcode dell'evento `SampleProfile` del provider PerfInfo (da abilitare per lo
 /// stack-walk con `TraceSetInformation(TraceStackTracingInfo, …)`).
 pub const OPCODE_SAMPLE_PROFILE: u8 = 46;
+
+/// Nome obbligatorio della sessione kernel classica.
+const KERNEL_LOGGER_NAME: &str = "NT Kernel Logger";
 
 /// Uno stack campionato: l'istante (QPC), il processo/thread e gli indirizzi di
 /// ritorno. **Ordine leaf-first**, come li fornisce ETW (Stack1 = frame più
@@ -88,6 +110,249 @@ pub fn parse_stack_walk(data: &[u8], pointer_size: usize) -> Option<StackSample>
         tid,
         frames,
     })
+}
+
+// ============================================================================
+// Glue della sessione ETW — richiede admin; il path di cattura live va
+// verificato manualmente con privilegi elevati. `unsafe` isolato e commentato.
+// ============================================================================
+
+/// `EVENT_TRACE_PROPERTIES` seguito in memoria dal nome del logger, come richiede
+/// l'API. La struct è allineata a 8 e la sua dimensione è multipla di 8, quindi
+/// `name` cade esattamente a `size_of::<EVENT_TRACE_PROPERTIES>()` (== il valore
+/// di `LoggerNameOffset`), senza padding intermedio.
+#[repr(C)]
+struct KernelTraceProps {
+    props: EVENT_TRACE_PROPERTIES,
+    name: [u16; 64],
+}
+
+impl KernelTraceProps {
+    /// Buffer azzerato con i campi comuni impostati (Guid, dimensioni, nome).
+    fn new(real_time: bool) -> Self {
+        // SAFETY: tutti i campi sono interi/GUID/unioni POD: lo zero è valido.
+        let mut k: KernelTraceProps = unsafe { std::mem::zeroed() };
+        k.props.Wnode.BufferSize = size_of::<KernelTraceProps>() as u32;
+        k.props.Wnode.Guid = SYSTEM_TRACE_CONTROL_GUID;
+        k.props.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
+        k.props.Wnode.ClientContext = 1; // 1 = clock QPC
+        k.props.LoggerNameOffset = size_of::<EVENT_TRACE_PROPERTIES>() as u32;
+        if real_time {
+            k.props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+            k.props.EnableFlags = EVENT_TRACE_FLAG_PROFILE;
+        }
+        let wide = KERNEL_LOGGER_NAME.encode_utf16().collect::<Vec<u16>>();
+        k.name[..wide.len()].copy_from_slice(&wide);
+        k
+    }
+
+    #[inline]
+    fn as_props_ptr(&mut self) -> *mut EVENT_TRACE_PROPERTIES {
+        std::ptr::addr_of_mut!(self.props)
+    }
+}
+
+/// Contesto passato al callback ETW via `EVENT_TRACE_LOGFILEW.Context`. Vive sul
+/// frame del thread consumer per tutta la durata di `ProcessTrace`.
+struct ConsumerCtx {
+    target_pid: u32,
+    tx: Sender<StackSample>,
+}
+
+/// Profiler ETW: avvia la sessione kernel, abilita lo stack-walk dei sample e
+/// consuma gli eventi su un thread dedicato, inviando gli `StackSample` del
+/// target via canale. Stop pulito alla Drop.
+pub struct EtwProfiler {
+    control: CONTROLTRACE_HANDLE,
+    /// Handle di consumo (`ProcessTrace`), pubblicato dal thread consumer; serve
+    /// a `CloseTrace` per sbloccare `ProcessTrace` allo stop. 0 = non ancora aperto.
+    trace: Arc<AtomicU64>,
+    join: Option<JoinHandle<()>>,
+    stopping: Arc<AtomicBool>,
+}
+
+impl EtwProfiler {
+    /// Avvia la cattura per `target_pid`. Gli stack vengono inviati su `tx`
+    /// (usare un canale **bounded**: il callback fa `try_send` e scarta se pieno,
+    /// per non stallare il consumer del kernel).
+    ///
+    /// Ritorna `Err(Permission)` se mancano i privilegi di amministratore — il
+    /// chiamante prosegue in polling-only.
+    pub fn start(target_pid: u32, tx: Sender<StackSample>) -> Result<Self, ArgusError> {
+        let mut props = KernelTraceProps::new(true);
+        let mut control = CONTROLTRACE_HANDLE::default();
+
+        // SAFETY: `control` e `props` sono validi per la durata della chiamata;
+        // `props` ha BufferSize/LoggerNameOffset corretti e il nome in coda.
+        let status = unsafe {
+            StartTraceW(
+                &mut control,
+                PCWSTR(props.name.as_ptr()),
+                props.as_props_ptr(),
+            )
+        };
+        if status == ERROR_ACCESS_DENIED {
+            return Err(ArgusError::Permission {
+                hint: "La cattura ETW (flame graph) richiede privilegi di \
+                       amministratore. Rilancia Argus come amministratore per \
+                       vedere dove il processo spende tempo CPU."
+                    .into(),
+            });
+        } else if status == ERROR_ALREADY_EXISTS {
+            return Err(ArgusError::Internal(
+                "Il logger kernel ETW è già in uso da un'altra sessione di trace \
+                 (es. WPR/xperf). Chiudila e riprova."
+                    .into(),
+            ));
+        } else if status != ERROR_SUCCESS {
+            return Err(ArgusError::Internal(format!(
+                "StartTrace ha restituito l'errore {}",
+                status.0
+            )));
+        }
+
+        // Abilita lo stack-walk per l'evento SampleProfile. Se fallisce, avremmo
+        // sample senza stack: degradiamo (log) invece di abortire.
+        let mut ev = CLASSIC_EVENT_ID {
+            EventGuid: PERFINFO_GUID,
+            Type: OPCODE_SAMPLE_PROFILE,
+            Reserved: [0; 7],
+        };
+        // SAFETY: `ev` è una struct locale valida per la durata della chiamata.
+        let st = unsafe {
+            TraceSetInformation(
+                control,
+                TraceStackTracingInfo,
+                std::ptr::addr_of!(ev) as *const c_void,
+                size_of::<CLASSIC_EVENT_ID>() as u32,
+            )
+        };
+        if st != ERROR_SUCCESS {
+            warn!(
+                "ETW: stack-walk non abilitato (errore {}): flame graph incompleto",
+                st.0
+            );
+        }
+        let _ = &mut ev; // mantiene `ev` in vita fino a qui
+
+        // Thread consumer: apre il trace real-time e cicla in ProcessTrace.
+        let trace = Arc::new(AtomicU64::new(0));
+        let stopping = Arc::new(AtomicBool::new(false));
+        let trace_c = trace.clone();
+        let join = std::thread::Builder::new()
+            .name("argus-etw".into())
+            .spawn(move || consume(target_pid, tx, trace_c))
+            .map_err(|e| ArgusError::Internal(format!("spawn thread ETW fallito: {e}")))?;
+
+        info!("ETW: sessione kernel avviata, cattura stack per PID {target_pid}");
+        Ok(Self {
+            control,
+            trace,
+            join: Some(join),
+            stopping,
+        })
+    }
+
+    /// Ferma la sessione e il thread consumer (idempotente).
+    pub fn stop(&mut self) {
+        if self.stopping.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        // CloseTrace sblocca ProcessTrace nel consumer.
+        let h = self.trace.load(Ordering::SeqCst);
+        if h != 0 {
+            // SAFETY: handle di trace valido pubblicato dal consumer dopo OpenTrace.
+            unsafe {
+                let _ = CloseTrace(PROCESSTRACE_HANDLE { Value: h });
+            }
+        }
+        // Ferma la sessione kernel.
+        let mut props = KernelTraceProps::new(false);
+        // SAFETY: control valido; props dimensionato col nome in coda.
+        unsafe {
+            let _ = ControlTraceW(
+                self.control,
+                PCWSTR::null(),
+                props.as_props_ptr(),
+                EVENT_TRACE_CONTROL_STOP,
+            );
+        }
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
+        info!("ETW: sessione kernel fermata");
+    }
+}
+
+impl Drop for EtwProfiler {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Corpo del thread consumer: apre il trace real-time e gira in `ProcessTrace`
+/// (bloccante) finché `CloseTrace` non lo sblocca. `ctx` (e quindi `tx`) vive
+/// sul suo stack per tutta la durata della chiamata.
+fn consume(target_pid: u32, tx: Sender<StackSample>, trace: Arc<AtomicU64>) {
+    let ctx = ConsumerCtx { target_pid, tx };
+    let name: Vec<u16> = KERNEL_LOGGER_NAME
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // Scrivere i campi (incluse le union) è safe; solo leggerli sarebbe unsafe.
+    let mut logfile = EVENT_TRACE_LOGFILEW {
+        LoggerName: PWSTR(name.as_ptr() as *mut u16),
+        Context: std::ptr::addr_of!(ctx) as *mut c_void,
+        Anonymous1: EVENT_TRACE_LOGFILEW_0 {
+            ProcessTraceMode: PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD,
+        },
+        Anonymous2: EVENT_TRACE_LOGFILEW_1 {
+            EventRecordCallback: Some(event_callback),
+        },
+        ..Default::default()
+    };
+
+    // SAFETY: logfile valido; LoggerName/Context vivono per tutta la ProcessTrace.
+    let handle = unsafe { OpenTraceW(&mut logfile) };
+    // Handle invalido = 0xFFFF…: niente da consumare.
+    if handle.Value == u64::MAX || handle.Value == 0 {
+        warn!("ETW: OpenTrace fallito, nessuno stack verrà raccolto");
+        return;
+    }
+    trace.store(handle.Value, Ordering::SeqCst);
+
+    // SAFETY: handle valido; ProcessTrace blocca finché CloseTrace non lo sblocca.
+    let _ = unsafe { ProcessTrace(&[handle], None, None) };
+}
+
+/// Callback ETW (ABI di sistema). Filtra gli eventi StackWalk del target, li
+/// decodifica e li invia senza bloccare (scarta se il canale è pieno).
+unsafe extern "system" fn event_callback(record: *mut EVENT_RECORD) {
+    // SAFETY (intera funzione, già contesto `unsafe`): ETW invoca la callback con
+    // un `record` valido per la sua durata; `UserData` punta a `UserDataLength`
+    // byte e `UserContext` è il puntatore a `ConsumerCtx` messo in
+    // `logfile.Context`, vivo per tutta la `ProcessTrace`. Validiamo i null prima
+    // di dereferenziare.
+    if record.is_null() {
+        return;
+    }
+    let r = &*record;
+    if r.EventHeader.ProviderId != STACK_WALK_GUID {
+        return;
+    }
+    let ctx = r.UserContext as *const ConsumerCtx;
+    if ctx.is_null() || r.UserData.is_null() || r.UserDataLength == 0 {
+        return;
+    }
+    let ctx = &*ctx;
+    let data = std::slice::from_raw_parts(r.UserData as *const u8, r.UserDataLength as usize);
+    if let Some(sample) = parse_stack_walk(data, 8) {
+        if sample.pid == ctx.target_pid {
+            // try_send: mai bloccare il consumer del kernel; in overflow si scarta.
+            let _ = ctx.tx.try_send(sample);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -167,5 +432,19 @@ mod tests {
         buf.extend_from_slice(&[1, 2, 3]);
         let s = parse_stack_walk(&buf, 8).unwrap();
         assert_eq!(s.frames, vec![0xDEAD_BEEF]);
+    }
+
+    /// La sessione ETW deve comportarsi bene in **entrambi** gli ambienti: se
+    /// elevata parte e si ferma pulita (RAII); altrimenti ritorna un errore
+    /// controllato. Mai un panic (no-panic policy). Il path di cattura live va
+    /// comunque verificato a mano come amministratore.
+    #[test]
+    fn etw_start_is_graceful_with_or_without_admin() {
+        let (tx, _rx) = crossbeam_channel::bounded(64);
+        // Elevato: parte e si ferma pulito (RAII). Non elevato: `start` ritorna
+        // Err e qui non entriamo. In nessun caso un panic.
+        if let Ok(mut p) = EtwProfiler::start(std::process::id(), tx) {
+            p.stop();
+        }
     }
 }
