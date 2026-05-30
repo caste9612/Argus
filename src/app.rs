@@ -16,12 +16,15 @@ pub struct ArgusApp {
     cmd_buf: Vec<Command>,
     /// PID da collegare automaticamente al primo frame (opzione `--attach`).
     pending_attach: Option<u32>,
+    /// Tab iniziale (opzione `--tab`); altrimenti Flame se c'è auto-attach.
+    pending_tab: Option<ui::Tab>,
 }
 
 impl ArgusApp {
     /// Crea l'app e avvia il thread sampler. `initial_pid` (da `--attach <pid>`)
-    /// viene collegato automaticamente al primo frame, aprendo la tab Flame.
-    pub fn new(initial_pid: Option<u32>) -> Self {
+    /// viene collegato automaticamente al primo frame; `initial_tab` (da `--tab`)
+    /// sceglie la tab iniziale (default: Flame se c'è auto-attach).
+    pub fn new(initial_pid: Option<u32>, initial_tab: Option<ui::Tab>) -> Self {
         let shared = Shared::new();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<Command>();
 
@@ -38,16 +41,20 @@ impl ArgusApp {
             ui: ui::State::default(),
             cmd_buf: Vec::new(),
             pending_attach: initial_pid,
+            pending_tab: initial_tab,
         }
     }
 }
 
 impl eframe::App for ArgusApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Auto-attach da riga di comando (una sola volta), aprendo la tab Flame.
+        // Auto-attach + tab iniziale da riga di comando (una sola volta).
         if let Some(pid) = self.pending_attach.take() {
             let _ = self.cmd_tx.send(Command::Attach(pid));
-            self.ui.tab = ui::Tab::Flame;
+            self.ui.tab = ui::Tab::Flame; // default per --attach
+        }
+        if let Some(tab) = self.pending_tab.take() {
+            self.ui.tab = tab; // --tab ha la precedenza
         }
 
         // Snapshot immutabili: letti senza mai bloccare il sampler.

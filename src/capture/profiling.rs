@@ -48,6 +48,8 @@ impl ProfilingSession {
         let (tx, rx) = crossbeam_channel::bounded::<EtwEvent>(CHANNEL_CAP);
         // TID del target ora (snapshot): i CSwitch ETW non portano il PID.
         let tids: HashSet<u32> = thread_ids(pid).into_iter().collect();
+        // La timeline conserva gli intervalli solo per i thread del target.
+        timeline.lock().set_tracked(tids.clone());
         let etw = EtwProfiler::start(pid, tids, tx)?;
 
         // Handle per i simboli del target vivo (best-effort): se non si apre, i

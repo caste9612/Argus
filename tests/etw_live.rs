@@ -33,6 +33,8 @@ fn captures_real_stacks_from_fixture() {
 
     let tids: std::collections::HashSet<u32> = thread_ids(pid).into_iter().collect();
     println!("thread del target: {}", tids.len());
+    let mut timeline = ThreadTimeline::new();
+    timeline.set_tracked(tids.clone()); // solo i thread del target
     let (tx, rx) = crossbeam_channel::bounded(16_384);
     let profiler = match EtwProfiler::start(pid, tids, tx) {
         Ok(p) => p,
@@ -48,7 +50,6 @@ fn captures_real_stacks_from_fixture() {
     // la timeline in tempo reale (preservando l'ordine).
     let mut samples = Vec::new();
     let mut switch_count = 0usize;
-    let mut timeline = ThreadTimeline::new();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {

@@ -6,7 +6,7 @@
 //! uno nuovo. È **pura** (nessuna API Win32): l'alimentazione live arriva dal
 //! parser CSwitch via ETW, ma la logica è testabile in isolamento.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Un intervallo di esecuzione `[start, end)` in unità di timestamp ETW (QPC).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +22,9 @@ pub struct ThreadTimeline {
     running: HashMap<u16, (u32, u64)>,
     /// Per TID: intervalli Running chiusi.
     intervals: HashMap<u32, Vec<Interval>>,
+    /// Se presente, si conservano gli intervalli solo per questi TID (i thread
+    /// del target). Gli altri servono solo a chiudere correttamente gli intervalli.
+    tracked: Option<HashSet<u32>>,
     first: Option<u64>,
     last: u64,
 }
@@ -35,8 +38,20 @@ impl ThreadTimeline {
     pub fn clear(&mut self) {
         self.running.clear();
         self.intervals.clear();
+        self.tracked = None;
         self.first = None;
         self.last = 0;
+    }
+
+    /// Limita gli intervalli conservati a questi TID (i thread del target). I
+    /// context switch degli altri thread aggiornano comunque lo stato per CPU,
+    /// così gli intervalli dei thread tracciati si chiudono correttamente.
+    pub fn set_tracked(&mut self, tids: HashSet<u32>) {
+        self.tracked = Some(tids);
+    }
+
+    fn is_tracked(&self, tid: u32) -> bool {
+        self.tracked.as_ref().is_none_or(|s| s.contains(&tid))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -47,8 +62,8 @@ impl ThreadTimeline {
     /// Il thread che girava prima su quella CPU chiude il suo intervallo.
     pub fn on_cswitch(&mut self, time: u64, cpu: u16, new_tid: u32) {
         if let Some((prev_tid, start)) = self.running.insert(cpu, (new_tid, time)) {
-            // Chiudi l'intervallo del thread uscente (se sensato).
-            if prev_tid != 0 && time > start {
+            // Chiudi l'intervallo del thread uscente (se sensato e tracciato).
+            if prev_tid != 0 && time > start && self.is_tracked(prev_tid) {
                 self.intervals
                     .entry(prev_tid)
                     .or_default()
@@ -113,6 +128,21 @@ mod tests {
         t.on_cswitch(80, 1, 9); // cpu1: T2 chiude [0,80]
         assert_eq!(t.intervals_of(1), &[Interval { start: 0, end: 50 }]);
         assert_eq!(t.intervals_of(2), &[Interval { start: 0, end: 80 }]);
+    }
+
+    #[test]
+    fn tracked_filter_keeps_only_target_threads() {
+        let mut t = ThreadTimeline::new();
+        t.set_tracked([100, 200].into_iter().collect());
+        t.on_cswitch(0, 0, 100); // 100 (target) inizia
+        t.on_cswitch(10, 0, 999); // 100 chiude [0,10] (tracked); 999 (estraneo) inizia
+        t.on_cswitch(20, 0, 200); // 999 chiude (non tracciato → scartato); 200 inizia
+        assert_eq!(t.intervals_of(100), &[Interval { start: 0, end: 10 }]);
+        assert!(
+            t.intervals_of(999).is_empty(),
+            "i thread non-target non vengono conservati"
+        );
+        assert_eq!(t.thread_count(), 1); // solo 100 ha intervalli chiusi
     }
 
     #[test]

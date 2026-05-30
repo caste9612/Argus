@@ -220,13 +220,41 @@ impl EtwProfiler {
 
         // SAFETY: `control` e `props` sono validi per la durata della chiamata;
         // `props` ha BufferSize/LoggerNameOffset corretti e il nome in coda.
-        let status = unsafe {
+        let mut status = unsafe {
             StartTraceW(
                 &mut control,
                 PCWSTR(props.name.as_ptr()),
                 props.as_props_ptr(),
             )
         };
+
+        // Sessione kernel **orfana** (es. un Argus precedente chiuso a forza, che
+        // non ha eseguito lo stop): fermala per nome e riprova una volta. È un
+        // caso reale in sviluppo ETW.
+        if status == ERROR_ALREADY_EXISTS {
+            let mut stop = KernelTraceProps::new(false);
+            // SAFETY: ferma per nome la sessione "NT Kernel Logger" esistente.
+            unsafe {
+                let _ = ControlTraceW(
+                    CONTROLTRACE_HANDLE::default(),
+                    PCWSTR(stop.name.as_ptr()),
+                    stop.as_props_ptr(),
+                    EVENT_TRACE_CONTROL_STOP,
+                );
+            }
+            props = KernelTraceProps::new(true);
+            control = CONTROLTRACE_HANDLE::default();
+            info!("ETW: trovata sessione kernel orfana, fermata; riprovo StartTrace");
+            // SAFETY: come sopra.
+            status = unsafe {
+                StartTraceW(
+                    &mut control,
+                    PCWSTR(props.name.as_ptr()),
+                    props.as_props_ptr(),
+                )
+            };
+        }
+
         if status == ERROR_ACCESS_DENIED || status == ERROR_PRIVILEGE_NOT_HELD {
             return Err(ArgusError::Permission {
                 hint: "La cattura ETW (flame graph) richiede privilegi di \
@@ -234,15 +262,9 @@ impl EtwProfiler {
                        vedere dove il processo spende tempo CPU."
                     .into(),
             });
-        } else if status == ERROR_ALREADY_EXISTS {
-            return Err(ArgusError::Internal(
-                "Il logger kernel ETW è già in uso da un'altra sessione di trace \
-                 (es. WPR/xperf). Chiudila e riprova."
-                    .into(),
-            ));
         } else if status != ERROR_SUCCESS {
             return Err(ArgusError::Internal(format!(
-                "StartTrace ha restituito l'errore {}",
+                "StartTrace ha restituito l'errore {} (logger kernel occupato?)",
                 status.0
             )));
         }
