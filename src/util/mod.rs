@@ -1,4 +1,5 @@
-//! Helper trasversali: tipi di errore e wrapper Win32 sicuri (RAII).
+//! Helper trasversali: tipi di errore, wrapper Win32 sicuri (RAII), I/O binario.
 
+pub mod bytes;
 pub mod error;
 pub mod win;

@@ -114,6 +114,48 @@ impl FlameGraph {
         self.total_samples == 0
     }
 
+    /// Ricostruisce un albero da una lista piatta di nodi (per il caricamento di
+    /// una sessione salvata, vedi `util`/`persist`). Ogni tupla è
+    /// `(nome, genitore, profondità, total, own)`; il nodo 0 è la radice. I
+    /// riferimenti al genitore non validi vengono ignorati (no panic su file
+    /// corrotto). `total_samples` è passato a parte (== total della radice).
+    pub fn from_nodes(nodes: &[(String, NodeId, u16, u64, u64)], total_samples: u64) -> Self {
+        let mut g = Self {
+            nodes: Vec::with_capacity(nodes.len().max(1)),
+            edges: HashMap::new(),
+            names: Vec::new(),
+            name_ids: HashMap::new(),
+            total_samples: 0,
+        };
+        if nodes.is_empty() {
+            g.reset_root();
+            return g;
+        }
+        for (i, (name, parent, depth, total, own)) in nodes.iter().enumerate() {
+            let name_id = g.intern(name);
+            g.nodes.push(Node {
+                name: name_id,
+                parent: *parent,
+                depth: *depth,
+                total: *total,
+                own: *own,
+                children: Vec::new(),
+            });
+            // Il nodo 0 è la radice (nessun genitore). Per gli altri, collega solo
+            // se il genitore è già stato creato (indice valido, < i): negli alberi
+            // ben formati il genitore precede sempre il figlio.
+            if i > 0 {
+                let p = *parent as usize;
+                if p < i {
+                    g.nodes[p].children.push(i as NodeId);
+                    g.edges.insert((*parent, name_id), i as NodeId);
+                }
+            }
+        }
+        g.total_samples = total_samples;
+        g
+    }
+
     /// Aggiunge uno stack, dal frame più esterno (root) a quello più interno
     /// (foglia, dove la CPU è stata campionata). I nomi vengono internati e i
     /// nodi condivisi lungo i prefissi comuni.
@@ -373,5 +415,30 @@ mod tests {
         let frames = vec![String::from("x"), String::from("y")];
         g.add_stack(&frames);
         assert_eq!(g.total_of(find(&g, &["x", "y"]).unwrap()), 1);
+    }
+
+    #[test]
+    fn from_nodes_rebuilds_equivalent_tree() {
+        let g = sample_graph();
+        // Esporta in lista piatta, come fa `persist` tramite gli accessor.
+        let nodes: Vec<(String, NodeId, u16, u64, u64)> = (0..g.node_count() as u32)
+            .map(|i| {
+                (
+                    g.name_of(i).to_string(),
+                    g.parent_of(i),
+                    g.depth_of(i),
+                    g.total_of(i),
+                    g.own_of(i),
+                )
+            })
+            .collect();
+        let g2 = FlameGraph::from_nodes(&nodes, g.total_samples());
+
+        assert_eq!(g2.total_samples(), g.total_samples());
+        assert_eq!(g2.node_count(), g.node_count());
+        let b = find(&g2, &["main", "a", "b"]).expect("nodo ricostruito");
+        assert_eq!(g2.total_of(b), 2);
+        assert_eq!(g2.own_of(b), 2);
+        assert_eq!(g.layout(ROOT).len(), g2.layout(ROOT).len());
     }
 }

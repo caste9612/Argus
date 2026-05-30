@@ -180,6 +180,23 @@ un'ottimizzazione futura, sensata solo per grafi enormi (>10⁵ nodi) o effetti
 particolari. **Conseguenza**: tab Flame interattiva (zoom/drill, ricerca, hover)
 con poco codice; `viz/` non è ancora necessario.
 
+### D18 — Formato `.argus`: binario manuale, versionato, zstd rinviato
+La persistenza di sessione (Fase 4, `persist.rs`) usa un formato binario
+little-endian con magic header `ARGUSCAP` + versione (`u16`) + byte di
+compressione. Scelte:
+- **Serializzazione manuale**, niente `serde`/`bincode`: i dati sono semplici
+  (scalari, `Vec<f32>`, albero flame), il round-trip è interamente testabile e
+  non aggiungiamo dipendenze di serializzazione (disciplina sulle dipendenze).
+- **Letture bounds-checked** via `util::bytes::ByteReader` (ritorna `Option`):
+  mai panic su file troncato o corrotto (no-panic policy). Pre-alloc limitata ai
+  byte disponibili → niente OOM su conteggi falsificati.
+- **Flame** serializzato con tabella nomi deduplicata + nodi piatti, ricostruito
+  con `FlameGraph::from_nodes` (valida i genitori, ignora i riferimenti errati).
+- **Compressione zstd rinviata**: aggiungerebbe `zstd-sys` (dipendenza C) per
+  file < 1 MB. Il byte `compression` nell'header permette di introdurla come
+  nuova versione del formato senza rotture.
+**Conseguenza**: record/replay senza nuove dipendenze pesanti, formato evolvibile.
+
 ## Questioni aperte
 
 - **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto
