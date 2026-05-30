@@ -6,6 +6,7 @@
 //! L'aggregatore come thread separato arriverà con gli eventi ad alta frequenza.
 
 pub mod flame;
+pub mod timeline;
 
 use std::collections::VecDeque;
 
