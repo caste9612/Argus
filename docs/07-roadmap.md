@@ -36,32 +36,41 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 **DoD**:
 - ✅ Attacchi un processo e vedi le metriche aggiornarsi in real-time
 - ⚠️ RAM: ~304 MB a riposo (include overhead driver GPU/wgpu; strutture dati di Argus <1 MB). Budget <200 MB da rivedere — vedi `09-decisions.md`
-- ✅ `cargo clippy --all-targets -- -D warnings` pulito; `cargo test` verde (2 unit + 3 integration)
-- ⏳ Binario release < 15 MB (da misurare)
+- ✅ `cargo clippy --all-targets -- -D warnings` pulito; `cargo test` verde
+- ✅ Binario release **10.62 MB** (< 15 MB target)
 - Edge case di `06-reliability.md`: target exit, access denied, PID inesistente, apertura di sé → coperti; GPU device lost / low-memory ancora da testare
 
 ---
 
-## Fase 2 — ETW + flame graph (prossima, ~2-3 settimane)
+## Fase 2 — ETW + flame graph 🔨 in corso (implementata, cattura live da verificare admin)
 
 **Obiettivo**: aggiungere cattura kernel-level e visualizzazione del hot path. Questo è il pezzo che **insegna ottimizzazione**.
 
 **Deliverable**:
-- ETW session manager (sottoscrizione provider `PerfInfo`)
-- Stack walk capture con `EVENT_TRACE_FLAG_PROFILE`
-- Symbol resolution (DbgHelp wrapper RAII) con cache LRU
-- Flame graph aggregator (struttura tree con count incrementale)
-- Flame graph renderer wgpu **custom** (un quad per frame, color coded, GPU-accelerated)
-- Search box (regex), zoom, click-to-drill
-- Tab "Flame" nella dashboard
-- Provider `Thread` per context switch (preparazione Fase 3)
+- ✅ ETW session manager (NT Kernel Logger, `EVENT_TRACE_FLAG_PROFILE`) — `capture/etw.rs`
+- ✅ Stack walk capture (`TraceSetInformation(TraceStackTracingInfo)` su SampleProfile)
+- ✅ Symbol resolution (DbgHelp wrapper RAII) con cache (2 generazioni) — `capture/symbols.rs`
+- ✅ Flame graph aggregator (tree con count incrementale) — `aggregation/flame.rs`
+- ✅ Flame graph renderer — **con il Painter di egui**, non wgpu custom (D17); sufficiente e verificabile
+- ✅ Search box (substring, non ancora regex), zoom, click-to-drill — `ui/flame.rs`
+- ✅ Tab "Flame" nella dashboard
+- ⬜ Provider `Thread` per context switch — rinviato (è preparazione Fase 3)
+
+**Stato verifica**: tutto compila, clippy/fmt/test verdi (17 unit + 3 integration), e l'app
+gira mostrando il flame graph e il degrado graceful "ETW non disponibile" senza admin
+(verificato a video). La **cattura ETW reale richiede admin** e va collaudata con un run
+elevato — è l'unica parte non verificabile in un ambiente non elevato.
 
 **DoD**:
-- Attacchi a un processo CPU-bound, vedi il flame graph popolarsi entro 10 s
-- Click su un frame zooma correttamente
-- Symbol resolution funziona per binari con `.pdb` disponibile (locale o symbol server)
-- Overhead totale sul target ancora < 1 %
-- Edge cases ETW Fase 2 di `06-reliability.md` testati
+- ⏳ Attacchi a un processo CPU-bound, vedi il flame graph popolarsi entro 10 s — *da verificare come admin*
+- ✅/⏳ Click su un frame zooma correttamente — logica di layout/focus unit-testata; resa visiva da verificare con dati reali
+- ⏳ Symbol resolution funziona per binari con `.pdb` (locale o symbol server) — *da verificare come admin*
+- ⏳ Overhead totale sul target < 1 % — *da misurare come admin*
+- 🔶 Edge cases ETW di `06-reliability.md`: "ETW fails (permessi) → polling-only + banner" ✅ verificato; gli altri da verificare come admin
+
+**Rifiniture rimaste per chiudere la fase**: ricerca regex (ora substring), risoluzione
+simboli del target *on-disk* via eventi Image/Load (ora best-effort su handle vivo, vedi D14),
+e la verifica end-to-end come amministratore.
 
 ---
 

@@ -76,7 +76,7 @@ Ognuno DEVE essere gestito con test esplicito prima della release fase corrispon
 | Polling rate > sample rate (laptop sleep) | Salta sample, non interpola fittizio | 1 |
 | Window minimized | Riduce render rate (no waste) | 1 |
 | Window restored | Ripristina 60 fps | 1 |
-| ETW session fails to start (permissions) | Continua polling-only + banner UI | 2 |
+| ETW session fails to start (permissions) | Continua polling-only + banner UI ✅ implementato e verificato (senza admin) | 2 |
 | ETW session lost (driver crash, …) | Tenta re-init, dopo 3 fail mostra banner | 2 |
 | Symbol load fails | Mostra indirizzi raw, non blocca | 2 |
 | GPU device lost (driver crash, RDP) | Re-init wgpu, log, continua | 1 |

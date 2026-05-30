@@ -10,10 +10,17 @@ ne mostra in tempo reale CPU, RAM (working set + private), I/O, thread e handle,
 con dashboard GPU e lista processi raggruppata/ordinabile. Build, clippy e test
 (2 unit + 3 integration) verdi.
 
-**Fase 2 — ETW + flame graph: in corso.** Prima tappa fatta: la struttura dati
-del flame graph (`aggregation/flame.rs`, albero pesato puro e testato, vedi D13).
-Prossimo: symbol resolution (DbgHelp) e sessione ETW per gli stack sample.
-Vedi [`07-roadmap.md`](07-roadmap.md).
+**Fase 2 — ETW + flame graph: implementata, cattura live da verificare come
+admin.** Fatto e testato (17 unit + 3 integration, clippy/fmt puliti): flame
+graph puro (`aggregation/flame.rs`, D13), symbol resolution DbgHelp con cache
+(`capture/symbols.rs`, D14), parser eventi + sessione ETW kernel
+(`capture/etw.rs`, D15), aggregatore ETW→simboli→flame (`capture/profiling.rs`,
+D16), tab "Flame graph" interattiva col Painter di egui (`ui/flame.rs`, D17).
+L'app gira e mostra il degrado graceful "ETW non disponibile" senza admin
+(verificato a video). **La cattura ETW reale richiede privilegi di
+amministratore e va collaudata con un run elevato** — è l'unica parte non
+verificabile in un ambiente non elevato (vedi DoD Fase 2 in
+[`07-roadmap.md`](07-roadmap.md)).
 
 ## Decisioni
 
@@ -179,6 +186,7 @@ con poco codice; `viz/` non è ancora necessario.
   nei docs. Quasi tutto è overhead del driver GPU/wgpu (le strutture dati di
   Argus sono <1 MB). Da decidere: rivedere il budget o misurare separatamente la
   "RAM nostra".
-- **Dimensione binario release**: da misurare contro il target <15 MB.
+- ~~**Dimensione binario release**: da misurare contro il target <15 MB.~~
+  **Risolto**: 10.62 MB in release (Fase 2), ben sotto il target.
 - **Edge case di affidabilità** non ancora testati in modo dedicato: GPU device
   lost, sistema low-memory (vedi tabella in [`06-reliability.md`](06-reliability.md)).

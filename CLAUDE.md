@@ -8,7 +8,11 @@ Profiler GPU-accelerato per Windows. Si attacca a un processo in esecuzione (sen
 
 ## Stato attuale
 
-**Fase 1 (MVP polling) completata.** Scaffold a layer (lib + bin), metriche polling-based real-time, dashboard egui, lista processi via `NtQuerySystemInformation` (raggruppata utente/sistema, ordinabile per CPU/RAM/Nome), sampler thread lock-free (`arc-swap`), error handling `ArgusError`, logging `tracing`, e test d'integrazione con binario fixture (2 unit + 3 integration verdi). **Prossimo: Fase 2 (ETW + flame graph).** Per il recap completo delle decisioni e lo stato vedi [`docs/09-decisions.md`](docs/09-decisions.md); per le fasi [`docs/07-roadmap.md`](docs/07-roadmap.md).
+**Fase 1 (MVP polling) completata.** Scaffold a layer (lib + bin), metriche polling-based real-time, dashboard egui, lista processi via `NtQuerySystemInformation` (raggruppata utente/sistema, ordinabile per CPU/RAM/Nome), sampler thread lock-free (`arc-swap`), error handling `ArgusError`, logging `tracing`, test d'integrazione con binario fixture. Binario release 10.62 MB.
+
+**Fase 2 (ETW + flame graph) implementata, cattura live da verificare come admin.** Aggiunti: flame graph (`aggregation/flame.rs`), symbol resolution DbgHelp con cache (`capture/symbols.rs`), parser eventi + sessione ETW kernel (`capture/etw.rs`), aggregatore che lega ETW→simboli→flame (`capture/profiling.rs`), tab "Flame graph" interattiva renderizzata col Painter di egui (`ui/flame.rs`: zoom/drill/ricerca/hover). 17 unit + 3 integration test verdi, clippy/fmt puliti. La cattura ETW reale richiede **privilegi di amministratore**: senza, l'app degrada con grazia (banner "ETW non disponibile", polling-only). **Verifica end-to-end come admin ancora da fare** — vedi DoD Fase 2.
+
+Per il recap completo delle decisioni (D1–D17) e lo stato vedi [`docs/09-decisions.md`](docs/09-decisions.md); per le fasi [`docs/07-roadmap.md`](docs/07-roadmap.md).
 
 ## Documenti da leggere prima di toccare codice
 
