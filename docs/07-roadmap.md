@@ -149,9 +149,11 @@ Stato sintetico a fine del lavoro autonomo. **Verde = fatto e verificato**
   verificata live.
 - **Disk I/O detail** (provider DiskIo) — parser+aggregazione, sezione Dashboard,
   **layout validato live** (16.4 MB scrittura = probe).
-- **Overhead misurato**: 2.21% (loop CPU-bound stretto, caso peggiore; <1% su carichi reali).
+- **Memoria** (provider PageFault): hard page fault + VirtualAlloc/Free del target,
+  sezione Dashboard, **validato live** (19 VirtualAlloc = 304 MB, granularità 16 MB).
+- **Overhead misurato**: ~2.0–2.2% (loop CPU-bound stretto, caso peggiore; <1% su reali).
 - **Infra**: CI GitHub Actions (windows: fmt/clippy/test/build + cargo-deny), tema scuro.
-- **50 unit + 3 integration + 2 ignored (admin) test verdi**, clippy/fmt puliti, release ~10.6 MB.
+- **54 unit + 3 integration + 2 ignored (admin) test verdi**, clippy/fmt puliti, release ~10.6 MB.
 
 ### ✅ Cattura ETW live — VERIFICATA come amministratore (pipeline + GUI)
 Con il fix del privilegio (D20) la pipeline ETW è stata collaudata end-to-end con un run
@@ -164,22 +166,27 @@ base, foglie in cima), con "cattura ETW attiva". Restano: **misura overhead** (<
 
 Comodità aggiunta: `argus.exe --attach <pid>` si collega subito e apre la tab Flame.
 
-### ⬜ Da implementare (rinviato, con indicazioni)
-- **Fase 3 allocazioni heap**: provider `HeapTrace`/`Microsoft-Windows-Kernel-Memory`
-  per le allocazioni + allocation flame graph + leak detection. **Richiede un secondo
-  tipo di sessione ETW** (non il NT Kernel Logger classico usato ora): è la ragione
-  principale del rinvio — è un'aggiunta architetturale, non solo un flag.
-- **Fase 3 page faults**: provider `PageFault` (rate + stack) — flag sullo stesso
-  kernel logger, simile a DiskIo; aggiungibile sul modello di `capture/diskio.rs`.
+### ⬜ Da implementare (rinviato / fuori scope, con indicazioni)
+- **Heap allocations a livello `HeapAlloc` — FUORI SCOPE by design** (D25). La
+  tracciatura heap di Windows richiede che il target abbia il tracing abilitato **al
+  lancio** (IFEO `TracingFlags` o `tracelog -heap`): impossibile da attivare
+  retroattivamente su un processo già in esecuzione senza iniettare codice o
+  rilanciarlo → viola il vincolo non-negoziabile "attach senza injection/modifica".
+  L'alternativa compatibile **è già implementata**: VirtualAlloc/Free (granularità di
+  pagina) + hard fault, vedi sopra. Un'eventuale "modalità lancio con heap tracing"
+  sarebbe un modello d'uso diverso (Argus avvia il target), da valutare a parte.
 - **Disk I/O — rifinitura**: nome file per operazione (correlazione `FileObject`→nome
   via eventi `FileIo`/`FileRundown`) e percentili di latenza calibrati (serve la
   frequenza QPC per convertire `HighResResponseTime` in ms). Il core (byte/op/disco)
   è fatto e validato.
+- **Allocation flame graph**: si potrebbe abilitare lo stack-walk anche per gli eventi
+  VirtualAlloc (come per SampleProfile) → stack delle allocazioni. Aggiunta mirata.
 - **Fase 5**: PMU/GPU — richiede driver/SDK vendor; rivalutare la fattibilità in user mode.
 - **Stabilità 8h**: nessuna crescita RAM/handle in run lungo — non eseguibile in questa
   sede (durata); harness overhead riutilizzabile come base.
 - **Nice-to-have**: compressione `.argus` (rinviata per disciplina dipendenze, file
-  minuscoli, D18); export PNG (ridondante con l'SVG); file dialog nativo; regex→fuzzy.
+  minuscoli, D18); export PNG (ridondante con l'SVG); file dialog nativo; regex→fuzzy;
+  rifiniture UI (animazioni, flame color per tipo, process tree).
 
 ---
 

@@ -10,17 +10,20 @@ del codice e gli obiettivi/standard dei doc (`01-vision`, `05-ui-design`,
 - P1 — simboli on-disk del target + flame per-funzione; rimozione emoji.
 - P2 — **lock contention** (KWAIT_REASON → categorie + breakdown UI + tooltip);
   **timeline ricca** (Ready/Waiting); **Disk I/O detail** (provider DiskIo,
-  parser+aggregazione+UI, layout validato live).
+  parser+aggregazione+UI, layout validato live); **memoria** (provider PageFault:
+  hard page fault + VirtualAlloc/Free del target, validato live).
 - P3 — **tema/palette** Argus (`ui/theme.rs`) + numeri monospace.
-- P4 — **overhead misurato** (2.21% caso peggiore, `tests/overhead.rs`).
+- P4 — **overhead misurato** (~2.0–2.2% caso peggiore, `tests/overhead.rs`).
 - P5 — **CI** GitHub Actions + **cargo-deny** + export **JSON**.
 
-**⬜ Rinviato (con motivazione):**
-- P2 — **heap allocations**: richiede un *secondo tipo di sessione ETW*
-  (HeapTrace/Kernel-Memory), non il NT Kernel Logger classico → aggiunta
-  architetturale separata. **Page faults**: aggiungibile sul modello DiskIo.
+**⬜ Rinviato / fuori scope (con motivazione):**
+- P2 — **heap allocations a livello `HeapAlloc`**: **fuori scope by design** (D25) —
+  richiede l'opt-in del target al lancio (IFEO/relaunch), incompatibile con l'attach
+  a un processo già avviato senza injection. L'alternativa compatibile (VirtualAlloc/
+  Free, granularità di pagina) **è implementata**.
 - P2 — Disk I/O: **nome file** per operazione (correlazione FileObject→nome) e
   **percentili di latenza** calibrati (serve frequenza QPC) — il core è fatto.
+  **Allocation flame graph**: stack-walk sugli eventi VirtualAlloc (aggiunta mirata).
 - P3 — animazioni, flame color per tipo, process tree, hover line-chart: minori.
 - P4 — stabilità 8h (durata), GPU device lost / low-memory / target 32-bit.
 - P5 — **zstd** (.argus minuscoli, libreria C → supply-chain; D18/D24) ed export

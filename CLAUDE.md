@@ -14,7 +14,9 @@ Profiler GPU-accelerato per Windows. Si attacca a un processo in esecuzione (sen
 
 **Fase 4 (recording + diff + export) completata.** Formato `.argus` binario versionato (`persist.rs`), record/replay (stato `Replay`), diff tra due capture con grafici sovrapposti + "movers" (`diff.rs`, tab Diff), export CSV/folded-stacks/SVG (`export.rs`). UI: Salva/Apri/Esporta/Confronta nella top bar. Tutto coperto da test (round-trip, export, diff).
 
-**Fase 3 (timeline + lock contention): live e verificata.** Parser `CSwitch` (`capture/cswitch.rs`), timeline stati-thread (`aggregation/timeline.rs`) con Running/Ready/Waiting, cattura `CSwitch` via ETW filtrata sui TID del target, tab "Timeline" Gantt (`ui/timeline_view.rs`). **Lock contention** fatta: la causa d'attesa `KWAIT_REASON` è propagata ai segmenti Waiting e categorizzata (Lock/IO/Idle/Preempted, `wait_category`/`wait_breakdown`); la UI mostra "Attese per causa" + tooltip per segmento. Verificata live (admin, `tests/etw_live`: 1535 CSwitch, 4 thread). **Allocazioni (HeapTrace) e page faults: ancora da fare** (heap richiede un secondo tipo di sessione ETW) — vedi handoff in `07-roadmap.md`.
+**Fase 3 (timeline + lock contention): live e verificata.** Parser `CSwitch` (`capture/cswitch.rs`), timeline stati-thread (`aggregation/timeline.rs`) con Running/Ready/Waiting, cattura `CSwitch` via ETW filtrata sui TID del target, tab "Timeline" Gantt (`ui/timeline_view.rs`). **Lock contention** fatta: la causa d'attesa `KWAIT_REASON` è propagata ai segmenti Waiting e categorizzata (Lock/IO/Idle/Preempted, `wait_category`/`wait_breakdown`); la UI mostra "Attese per causa" + tooltip per segmento. Verificata live (admin, `tests/etw_live`: 1535 CSwitch, 4 thread).
+
+**Memoria (Fase 3): hard page fault + VirtualAlloc tracking, validati live.** Provider `PageFault` sullo stesso kernel logger (`capture/memevents.rs` parser puri, `aggregation/memstats.rs`): hard fault (filtrati sui TID del target) e VirtualAlloc/VirtualFree (filtrati sul PID nel payload), sezione "Memoria (ETW)" in Dashboard. **Validato live** (`tests/etw_live`: 19 VirtualAlloc = 304 MB, granularità 16 MB = churn del fixture). È la tracciatura allocazioni **compatibile col vincolo no-injection**; il tracking a livello `HeapAlloc` resta fuori scope perché richiederebbe l'opt-in del target al lancio (IFEO/relaunch) — vedi `07-roadmap.md`.
 
 **Disk I/O detail (Fase 2/3): fatto e validato live.** Provider `DiskIo` sullo stesso kernel logger (`capture/diskio.rs` parser puro, `aggregation/diskstats.rs` aggregazione per direzione/disco), sezione "Disco fisico (ETW)" in Dashboard. Layout `DiskIo_TypedData` **validato live** (`tests/etw_live`: 16.4 MB di scrittura = probe da 16 MB). File-name per operazione + percentili di latenza calibrati: rinviati.
 
@@ -22,7 +24,7 @@ Profiler GPU-accelerato per Windows. Si attacca a un processo in esecuzione (sen
 
 Comodità CLI: `argus.exe --attach <PID> [--tab flame|timeline|metriche|diff]`. Guida d'uso: [`docs/10-uso.md`](docs/10-uso.md).
 
-Stato test: **50 unit + 3 integration + 2 ignored (admin: `etw_live`, `overhead`) verdi**, clippy/fmt puliti, release ~10.6 MB. Decisioni D1–D24 in [`docs/09-decisions.md`](docs/09-decisions.md); fasi e **lavoro residuo/verifica** in [`docs/07-roadmap.md`](docs/07-roadmap.md); backlog in [`docs/11-backlog.md`](docs/11-backlog.md).
+Stato test: **54 unit + 3 integration + 2 ignored (admin: `etw_live`, `overhead`) verdi**, clippy/fmt puliti, release ~10.6 MB. Decisioni D1–D25 in [`docs/09-decisions.md`](docs/09-decisions.md); fasi e **lavoro residuo/verifica** in [`docs/07-roadmap.md`](docs/07-roadmap.md); backlog in [`docs/11-backlog.md`](docs/11-backlog.md).
 
 ## Documenti da leggere prima di toccare codice
 

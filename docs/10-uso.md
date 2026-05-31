@@ -39,7 +39,10 @@ Da riga di comando puoi collegarti subito: `argus.exe --attach <PID>`
   I/O lettura/scrittura, thread, handle). Ogni elemento ha un tooltip che spiega
   cosa significa. Con cattura ETW attiva (admin) appare anche una sezione
   **"Disco fisico (ETW)"**: byte letti/scritti, n° operazioni e dimensione media
-  per disco (attività di sistema durante la cattura).
+  per disco (attività di sistema durante la cattura), e una sezione **"Memoria
+  (ETW)"** del target: hard page fault (page-in da disco), VirtualAlloc (memoria
+  virtuale riservata) e saldo netto alloc−free (un saldo positivo e crescente
+  segnala possibile crescita/leak).
 - **Flame graph** — *dove* il processo spende tempo CPU (richiede admin).
   - **Click** su un frame per zoomare; **zoom out** torna alla radice.
   - **Cerca (regex)**: evidenzia le funzioni che combaciano, attenua le altre.

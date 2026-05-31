@@ -26,16 +26,17 @@ video — vedi handoff in [`07-roadmap.md`](07-roadmap.md).
 record/replay (D19), diff tra capture (`diff.rs`, tab Diff), export
 CSV/folded/SVG (`export.rs`). Tutto testato (round-trip, export, diff).
 
-**Fase 3 — timeline + lock contention: live e verificata.** Timeline stati-thread
+**Fase 3 — timeline + lock + memoria: live e verificata.** Timeline stati-thread
 (Running/Ready/Waiting) dai `CSwitch`, filtrata sui TID del target; **lock
 contention** dalla causa d'attesa `KWAIT_REASON` (D21). **Disk I/O detail** (D22)
-sullo stesso kernel logger, validato live. Restano **allocazioni heap** (secondo
-tipo di sessione ETW) e **page faults** — vedi handoff.
+e **memoria** (hard fault + VirtualAlloc, D25) sullo stesso kernel logger, validati
+live. Il tracking heap a livello `HeapAlloc` resta **fuori scope** per il vincolo
+no-injection (D25).
 
-**Overhead** misurato (D23): 2.21% su loop CPU-bound stretto. **Infra**: export
+**Overhead** misurato (D23): ~2.0–2.2% su loop CPU-bound stretto. **Infra**: export
 JSON, CI, cargo-deny, tema (D24).
 
-**Test totali**: 50 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
+**Test totali**: 54 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
 puliti; release ~10.6 MB.
 
 ## Decisioni
@@ -281,6 +282,23 @@ advisory) come da `03-tech-stack`. **Non** aggiunti: compressione zstd del `.arg
 rinviava già, header forward-compatible) ed export PNG (ridondante con l'SVG già
 condivisibile, `image` è un albero deps grande). Coerente con "no dipendenze
 comode" di `CLAUDE.md`.
+
+### D25 — Memoria: hard fault + VirtualAlloc, non heap-level (vincolo no-injection)
+Il provider `PageFault` sul kernel logger dà due segnali catturabili su un
+processo **già in esecuzione senza modificarlo**: hard page fault (opcode 32,
+flag `MEMORY_HARD_FAULTS` — page-in da disco, filtrati sui TID del target) e
+VirtualAlloc/VirtualFree (opcode 98/99, flag `VIRTUAL_ALLOC` — riserve di VM,
+filtrate sul PID nel payload). Si abilitano solo questi flag (no soft fault, che
+sono altissima frequenza → flood). `capture/memevents.rs` + `aggregation/memstats.rs`.
+**Validato live**: con il fixture che fa churn di blocchi da 16 MB durante la
+cattura → 19 VirtualAlloc = 304 MB, granularità 16 MB. Il tracking a livello
+**`HeapAlloc`** (per-allocazione) **non è fattibile** rispettando il vincolo
+non-negoziabile di Argus ("attach a un processo in esecuzione senza injection né
+modificarlo", `CLAUDE.md`): la tracciatura heap di Windows richiede che il target
+abbia il tracing abilitato **al lancio** (IFEO `TracingFlags`, o `tracelog -heap`),
+cosa impossibile da attivare retroattivamente su un processo arbitrario già avviato
+senza iniettare codice o rilanciarlo. VirtualAlloc (granularità di pagina) è
+l'alternativa compatibile che forniamo; heap-level resta fuori scope by design.
 
 ## Questioni aperte
 
