@@ -25,6 +25,10 @@ use crate::capture::cswitch::{parse_cswitch, OPCODE_CSWITCH, THREAD_GUID};
 use crate::capture::diskio::{
     parse_disk_io, DiskIoEvent, DISK_IO_GUID, OPCODE_DISK_READ, OPCODE_DISK_WRITE,
 };
+use crate::capture::memevents::{
+    parse_hard_fault, parse_virtual_alloc, MemEvent, OPCODE_HARD_FAULT, OPCODE_VIRTUAL_ALLOC,
+    OPCODE_VIRTUAL_FREE, PAGE_FAULT_GUID,
+};
 use crate::util::error::ArgusError;
 use crossbeam_channel::Sender;
 use std::collections::HashSet;
@@ -42,9 +46,10 @@ use windows::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, OpenTraceW, ProcessTrace, StartTraceW, TraceSetInformation,
     TraceStackTracingInfo, CLASSIC_EVENT_ID, CONTROLTRACE_HANDLE, EVENT_RECORD,
     EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_CSWITCH, EVENT_TRACE_FLAG_DISK_IO,
-    EVENT_TRACE_FLAG_PROFILE, EVENT_TRACE_LOGFILEW, EVENT_TRACE_LOGFILEW_0, EVENT_TRACE_LOGFILEW_1,
-    EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE,
-    PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
+    EVENT_TRACE_FLAG_MEMORY_HARD_FAULTS, EVENT_TRACE_FLAG_PROFILE, EVENT_TRACE_FLAG_VIRTUAL_ALLOC,
+    EVENT_TRACE_LOGFILEW, EVENT_TRACE_LOGFILEW_0, EVENT_TRACE_LOGFILEW_1, EVENT_TRACE_PROPERTIES,
+    EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
+    PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
 };
 
 /// GUID di controllo del kernel logger (è il `Wnode.Guid` della sessione di
@@ -99,6 +104,7 @@ pub enum EtwEvent {
     Stack(StackSample),
     Switch(SwitchEvent),
     Disk(DiskIoEvent),
+    Mem(MemEvent),
 }
 
 /// Dimensione del prefisso fisso del payload StackWalk:
@@ -171,9 +177,14 @@ impl KernelTraceProps {
         if real_time {
             k.props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
             // PROFILE = sample-profile CPU (flame); CSWITCH = context switch
-            // (timeline); DISK_IO = operazioni di disco completate (diskstats).
-            k.props.EnableFlags =
-                EVENT_TRACE_FLAG_PROFILE | EVENT_TRACE_FLAG_CSWITCH | EVENT_TRACE_FLAG_DISK_IO;
+            // (timeline); DISK_IO = operazioni di disco (diskstats); HARD_FAULTS +
+            // VIRTUAL_ALLOC = memoria (memstats). Sono flag a basso volume/alto
+            // segnale: niente flood (i soft fault, altissima frequenza, restano off).
+            k.props.EnableFlags = EVENT_TRACE_FLAG_PROFILE
+                | EVENT_TRACE_FLAG_CSWITCH
+                | EVENT_TRACE_FLAG_DISK_IO
+                | EVENT_TRACE_FLAG_MEMORY_HARD_FAULTS
+                | EVENT_TRACE_FLAG_VIRTUAL_ALLOC;
         }
         let wide = KERNEL_LOGGER_NAME.encode_utf16().collect::<Vec<u16>>();
         k.name[..wide.len()].copy_from_slice(&wide);
@@ -453,6 +464,27 @@ unsafe extern "system" fn event_callback(record: *mut EVENT_RECORD) {
         if opcode == OPCODE_DISK_READ || opcode == OPCODE_DISK_WRITE {
             if let Some(ev) = parse_disk_io(data, opcode, 8) {
                 let _ = ctx.tx.try_send(EtwEvent::Disk(ev));
+            }
+        }
+    } else if provider == PAGE_FAULT_GUID {
+        // Memoria: hard fault (filtrato sui thread del target via TThreadId) e
+        // VirtualAlloc/Free (filtrato sul PID del target nel payload).
+        let opcode = r.EventHeader.EventDescriptor.Opcode;
+        if opcode == OPCODE_HARD_FAULT {
+            if let Some(ev @ MemEvent::HardFault { thread_id, .. }) = parse_hard_fault(data, 8) {
+                if ctx.target_tids.contains(&thread_id) {
+                    let _ = ctx.tx.try_send(EtwEvent::Mem(ev));
+                }
+            }
+        } else if opcode == OPCODE_VIRTUAL_ALLOC || opcode == OPCODE_VIRTUAL_FREE {
+            if let Some(ev) = parse_virtual_alloc(data, opcode, 8) {
+                let pid = match ev {
+                    MemEvent::VirtualAlloc { pid, .. } | MemEvent::VirtualFree { pid, .. } => pid,
+                    _ => 0,
+                };
+                if pid == ctx.target_pid {
+                    let _ = ctx.tx.try_send(EtwEvent::Mem(ev));
+                }
             }
         }
     }

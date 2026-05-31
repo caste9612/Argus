@@ -7,6 +7,7 @@
 
 pub mod diskstats;
 pub mod flame;
+pub mod memstats;
 pub mod timeline;
 
 use std::collections::VecDeque;

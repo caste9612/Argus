@@ -2,6 +2,7 @@
 
 use super::kpi;
 use crate::aggregation::diskstats::DiskStats;
+use crate::aggregation::memstats::MemStats;
 use crate::aggregation::{Snapshot, Status};
 use eframe::egui;
 use parking_lot::Mutex;
@@ -13,10 +14,10 @@ const TEAL: egui::Color32 = egui::Color32::from_rgb(127, 224, 185);
 const AMBER: egui::Color32 = egui::Color32::from_rgb(240, 198, 116);
 const PINK: egui::Color32 = egui::Color32::from_rgb(255, 165, 224);
 
-pub fn render(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>) {
+pub fn render(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>, mem: &Mutex<MemStats>) {
     match &snap.status {
         Status::NotAttached | Status::Error(_) => placeholder(ui),
-        Status::Running | Status::Exited | Status::Replay(_) => dashboard(ui, snap, disk),
+        Status::Running | Status::Exited | Status::Replay(_) => dashboard(ui, snap, disk, mem),
     }
 }
 
@@ -35,7 +36,7 @@ fn placeholder(ui: &mut egui::Ui) {
     });
 }
 
-fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>) {
+fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>, mem: &Mutex<MemStats>) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -152,7 +153,59 @@ fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>) {
 
             ui.add_space(8.0);
             disk_section(ui, disk);
+
+            ui.add_space(8.0);
+            mem_section(ui, mem);
         });
+}
+
+/// Dettaglio memoria dagli eventi PageFault/VirtualAlloc ETW (filtrati sul
+/// target): mostrato solo quando ci sono dati.
+fn mem_section(ui: &mut egui::Ui, mem: &Mutex<MemStats>) {
+    let m = mem.lock();
+    if m.is_empty() {
+        return;
+    }
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Memoria (ETW)").strong());
+            ui.weak("· del target durante la cattura");
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            kpi::card(
+                ui,
+                "Hard page fault",
+                &format!("{}", m.hard_faults),
+                PINK,
+                &format!(
+                    "Page-in da disco (fault costosi): {:.1} MB letti totali. \
+                     Alti = il working set non sta in RAM (paging).",
+                    mb(m.hard_fault_bytes)
+                ),
+            );
+            kpi::card(
+                ui,
+                "VirtualAlloc",
+                &format!("{:.1} MB", mb(m.valloc_bytes)),
+                PURPLE,
+                &format!(
+                    "{} riserve/commit di memoria virtuale (granularità di pagina, \
+                     non HeapAlloc).",
+                    m.valloc_count
+                ),
+            );
+            let net = m.net_alloc_bytes();
+            kpi::card(
+                ui,
+                "Saldo netto",
+                &format!("{:+.1} MB", net as f64 / (1024.0 * 1024.0)),
+                if net > 0 { AMBER } else { TEAL },
+                "VirtualAlloc − VirtualFree: positivo e crescente = la memoria \
+                 virtuale riservata sale (possibile crescita/leak).",
+            );
+        });
+    });
 }
 
 /// Dettaglio disco dagli eventi DiskIo ETW (di sistema): mostrato solo quando

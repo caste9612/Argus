@@ -6,6 +6,7 @@
 pub mod cswitch;
 pub mod diskio;
 pub mod etw;
+pub mod memevents;
 pub mod process;
 pub mod profiling;
 pub mod sampler;

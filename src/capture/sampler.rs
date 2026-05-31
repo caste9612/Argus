@@ -3,6 +3,7 @@
 
 use crate::aggregation::diskstats::DiskStats;
 use crate::aggregation::flame::FlameGraph;
+use crate::aggregation::memstats::MemStats;
 use crate::aggregation::timeline::ThreadTimeline;
 use crate::aggregation::{FlameStatus, ProcessMeta, Snapshot, Status};
 use crate::capture::process::{
@@ -64,6 +65,8 @@ pub struct Shared {
     pub timeline: Arc<Mutex<ThreadTimeline>>,
     /// Statistiche disco (Fase 2/3), popolate dagli eventi DiskIo ETW.
     pub disk: Arc<Mutex<DiskStats>>,
+    /// Statistiche memoria (Fase 3): hard fault + VirtualAlloc/Free del target.
+    pub mem: Arc<Mutex<MemStats>>,
     /// Elenco dei file `.argus` salvati, dal più recente (Fase 4).
     pub captures: ArcSwap<Vec<PathBuf>>,
     /// Risultato dell'ultimo confronto (diff) baseline vs corrente (Fase 4).
@@ -79,6 +82,7 @@ impl Shared {
             flame: Arc::new(Mutex::new(FlameGraph::new())),
             timeline: Arc::new(Mutex::new(ThreadTimeline::new())),
             disk: Arc::new(Mutex::new(DiskStats::new())),
+            mem: Arc::new(Mutex::new(MemStats::new())),
             captures: ArcSwap::from_pointee(Vec::new()),
             diff: ArcSwap::from_pointee(None),
         })
@@ -246,6 +250,7 @@ impl Sampler {
             self.shared.flame.clone(),
             self.shared.timeline.clone(),
             self.shared.disk.clone(),
+            self.shared.mem.clone(),
         ) {
             Ok(sess) => {
                 self.profiling = Some(sess);
@@ -273,6 +278,7 @@ impl Sampler {
             self.shared.flame.lock().clear();
             self.shared.timeline.lock().clear();
             self.shared.disk.lock().clear();
+            self.shared.mem.lock().clear();
         }
         self.snap.flame_status = FlameStatus::Off;
     }

@@ -13,6 +13,7 @@
 
 use argus::aggregation::diskstats::DiskStats;
 use argus::aggregation::flame::FlameGraph;
+use argus::aggregation::memstats::MemStats;
 use argus::aggregation::timeline::ThreadTimeline;
 use argus::capture::etw::{EtwEvent, EtwProfiler};
 use argus::capture::process::{open_for_symbols, thread_ids};
@@ -67,6 +68,7 @@ fn captures_real_stacks_from_fixture() {
     let mut samples = Vec::new();
     let mut switch_count = 0usize;
     let mut diskstats = DiskStats::new();
+    let mut memstats = MemStats::new();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
@@ -83,6 +85,7 @@ fn captures_real_stacks_from_fixture() {
                     );
                 }
                 EtwEvent::Disk(ev) => diskstats.on_event(&ev),
+                EtwEvent::Mem(ev) => memstats.on_event(&ev),
             }
         }
     }
@@ -188,6 +191,21 @@ fn captures_real_stacks_from_fixture() {
             w.ops
         );
     }
+    // Memoria (target): validazione live del layout PageFault/VirtualAlloc. Il
+    // fixture alloca 64 MB → ci aspettiamo VirtualAlloc del target.
+    println!(
+        "  hard page fault .......... {} ({:.2} MB letti)",
+        memstats.hard_faults,
+        mb(memstats.hard_fault_bytes)
+    );
+    println!(
+        "  VirtualAlloc ............. {} op, {:.2} MB · VirtualFree {} op, {:.2} MB · netto {:.2} MB",
+        memstats.valloc_count,
+        mb(memstats.valloc_bytes),
+        memstats.vfree_count,
+        mb(memstats.vfree_bytes),
+        memstats.net_alloc_bytes() as f64 / (1024.0 * 1024.0)
+    );
 
     // --- Asserzioni: la pipe ETW funziona (flame + timeline) ---
     assert!(
