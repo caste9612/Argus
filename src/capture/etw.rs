@@ -82,6 +82,8 @@ pub struct SwitchEvent {
     pub cpu: u16,
     pub new_tid: u32,
     pub old_tid: u32,
+    /// Stato in cui passa il thread uscente (KTHREAD_STATE) → Ready/Waiting/…
+    pub old_state: i8,
 }
 
 /// Evento ETW consegnato all'aggregatore: uno stack sample (flame graph) o un
@@ -430,6 +432,7 @@ unsafe extern "system" fn event_callback(record: *mut EVENT_RECORD) {
                     cpu: r.BufferContext.Anonymous.ProcessorIndex,
                     new_tid: cs.new_tid,
                     old_tid: cs.old_tid,
+                    old_state: cs.old_state,
                 };
                 let _ = ctx.tx.try_send(EtwEvent::Switch(ev));
             }

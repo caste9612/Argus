@@ -3,7 +3,7 @@
 //! esecuzione mappati sullo span temporale catturato. Disegnata col Painter di
 //! egui (come il flame, D17). Si popola solo con cattura ETW attiva (admin).
 
-use crate::aggregation::timeline::ThreadTimeline;
+use crate::aggregation::timeline::{ThreadState, ThreadTimeline};
 use crate::aggregation::{FlameStatus, Snapshot, Status};
 use eframe::egui;
 use parking_lot::Mutex;
@@ -12,10 +12,21 @@ const ROW_H: f32 = 18.0;
 const LABEL_W: f32 = 150.0;
 const MAX_ROWS: usize = 48;
 
-const RUN: egui::Color32 = egui::Color32::from_rgb(124, 217, 146); // verde "running"
+const RUN: egui::Color32 = egui::Color32::from_rgb(124, 217, 146); // verde: Running
+const READY: egui::Color32 = egui::Color32::from_rgb(240, 198, 116); // ambra: Ready (attende CPU)
+const WAIT: egui::Color32 = egui::Color32::from_rgb(124, 160, 220); // blu: Waiting
 const AMBER: egui::Color32 = egui::Color32::from_rgb(240, 198, 116);
 const GREEN: egui::Color32 = egui::Color32::from_rgb(124, 217, 146);
 const GREY: egui::Color32 = egui::Color32::from_rgb(148, 148, 162);
+
+fn state_color(s: ThreadState) -> egui::Color32 {
+    match s {
+        ThreadState::Running => RUN,
+        ThreadState::Ready => READY,
+        ThreadState::Waiting => WAIT,
+        ThreadState::Other => egui::Color32::from_gray(70),
+    }
+}
 
 pub fn render(ui: &mut egui::Ui, snap: &Snapshot, timeline: &Mutex<ThreadTimeline>) {
     ui.horizontal(|ui| {
@@ -63,15 +74,20 @@ pub fn render(ui: &mut egui::Ui, snap: &Snapshot, timeline: &Mutex<ThreadTimelin
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} thread · finestra {} tick QPC · in esecuzione = verde",
-                    threads.len(),
-                    t1.saturating_sub(t0)
-                ))
-                .small()
-                .weak(),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} thread · finestra {} tick QPC ·",
+                        threads.len(),
+                        t1.saturating_sub(t0)
+                    ))
+                    .small()
+                    .weak(),
+                );
+                ui.colored_label(RUN, "Running");
+                ui.colored_label(READY, "Ready");
+                ui.colored_label(WAIT, "Waiting");
+            });
             let width = ui.available_width().max(80.0);
             let track_w = (width - LABEL_W).max(20.0);
             let shown = threads.len().min(MAX_ROWS);
@@ -98,17 +114,17 @@ pub fn render(ui: &mut egui::Ui, snap: &Snapshot, timeline: &Mutex<ThreadTimelin
                     egui::pos2(area.right(), y + ROW_H - 2.0),
                 );
                 painter.rect_filled(track, 1.0, egui::Color32::from_gray(32));
-                // Intervalli Running.
-                for iv in t.intervals_of(*tid) {
+                // Segmenti di stato (Running/Ready/Waiting) colorati.
+                for seg in t.segments_of(*tid) {
                     let x0 = track_left
-                        + ((iv.start.saturating_sub(t0)) as f64 / span * track_w as f64) as f32;
+                        + ((seg.start.saturating_sub(t0)) as f64 / span * track_w as f64) as f32;
                     let x1 = track_left
-                        + ((iv.end.saturating_sub(t0)) as f64 / span * track_w as f64) as f32;
+                        + ((seg.end.saturating_sub(t0)) as f64 / span * track_w as f64) as f32;
                     let r = egui::Rect::from_min_max(
                         egui::pos2(x0, y + 2.0),
                         egui::pos2(x1.max(x0 + 1.0), y + ROW_H - 2.0),
                     );
-                    painter.rect_filled(r, 1.0, RUN);
+                    painter.rect_filled(r, 1.0, state_color(seg.state));
                 }
             }
             if threads.len() > MAX_ROWS {

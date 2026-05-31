@@ -57,7 +57,7 @@ fn captures_real_stacks_from_fixture() {
                 EtwEvent::Stack(s) => samples.push(s),
                 EtwEvent::Switch(sw) => {
                     switch_count += 1;
-                    timeline.on_cswitch(sw.timestamp, sw.cpu, sw.new_tid);
+                    timeline.on_cswitch(sw.timestamp, sw.new_tid, sw.old_tid, sw.old_state);
                 }
             }
         }

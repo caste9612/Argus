@@ -120,7 +120,7 @@ fn aggregate(
         if !switches.is_empty() {
             let mut t = timeline.lock();
             for sw in &switches {
-                t.on_cswitch(sw.timestamp, sw.cpu, sw.new_tid);
+                t.on_cswitch(sw.timestamp, sw.new_tid, sw.old_tid, sw.old_state);
             }
         }
     }
