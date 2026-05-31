@@ -35,16 +35,16 @@ Da riga di comando puoi collegarti subito: `argus.exe --attach <PID>`
 
 ## Le tab
 
-- **📊 Metriche** — KPI card + grafici time-series (CPU, working set/private,
+- **Metriche** — KPI card + grafici time-series (CPU, working set/private,
   I/O lettura/scrittura, thread, handle). Ogni elemento ha un tooltip che spiega
   cosa significa.
-- **🔥 Flame graph** — *dove* il processo spende tempo CPU (richiede admin).
+- **Flame graph** — *dove* il processo spende tempo CPU (richiede admin).
   - **Click** su un frame per zoomare; **zoom out** torna alla radice.
   - **Cerca (regex)**: evidenzia le funzioni che combaciano, attenua le altre.
   - **Hover**: nome, numero di sample e percentuali (totale e self).
-- **📶 Timeline** — Gantt: quando ogni thread del target è in esecuzione
+- **Timeline** — Gantt: quando ogni thread del target è in esecuzione
   (verde), dai context switch (richiede admin). I thread più attivi in cima.
-- **⇄ Diff** — confronto "prima/dopo" tra due sessioni salvate: grafici
+- **Diff** — confronto "prima/dopo" tra due sessioni salvate: grafici
   sovrapposti (A grigio = baseline, B blu = corrente) e le funzioni che cambiano
   di più (movers).
 
@@ -52,13 +52,13 @@ Da riga di comando puoi collegarti subito: `argus.exe --attach <PID>`
 
 Nella barra in alto (attivi quando c'è una sessione):
 
-- **💾 Salva** — salva la sessione corrente (metriche + flame) in un file
+- **Salva** — salva la sessione corrente (metriche + flame) in un file
   `.argus` in `%LOCALAPPDATA%\Argus\captures`.
-- **📂 Apri** — riapre una sessione salvata in *replay* (la rivedi come live).
-- **⬇ Esporta** — CSV (metriche), folded-stacks (apribile in
+- **Apri** — riapre una sessione salvata in *replay* (la rivedi come live).
+- **Esporta** — CSV (metriche), folded-stacks (apribile in
   [speedscope](https://www.speedscope.app/) / flamegraph.pl), SVG (flame graph
   statico, apribile nel browser). Vanno in `%LOCALAPPDATA%\Argus\exports`.
-- **⇄ Confronta** — scegli una sessione `.argus` come baseline; il risultato
+- **Confronta** — scegli una sessione `.argus` come baseline; il risultato
   appare nella tab **Diff**.
 
 Workflow tipico "ottimizzazione": collega → *Salva* (prima) → ottimizza il codice

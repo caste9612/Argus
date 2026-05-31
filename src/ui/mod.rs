@@ -73,10 +73,10 @@ pub fn render(
     process_list::render(ctx, state, procs, out);
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut state.tab, Tab::Dashboard, "📊 Metriche");
-            ui.selectable_value(&mut state.tab, Tab::Flame, "🔥 Flame graph");
-            ui.selectable_value(&mut state.tab, Tab::Timeline, "📶 Timeline");
-            ui.selectable_value(&mut state.tab, Tab::Diff, "⇄ Diff");
+            ui.selectable_value(&mut state.tab, Tab::Dashboard, "Metriche");
+            ui.selectable_value(&mut state.tab, Tab::Flame, "Flame graph");
+            ui.selectable_value(&mut state.tab, Tab::Timeline, "Timeline");
+            ui.selectable_value(&mut state.tab, Tab::Diff, "Diff");
         });
         ui.separator();
         match state.tab {
@@ -103,7 +103,7 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut
             ui.separator();
 
             if snap.has_debug_privilege {
-                ui.colored_label(egui::Color32::from_rgb(124, 217, 146), "🛡 elevato")
+                ui.colored_label(egui::Color32::from_rgb(124, 217, 146), "● elevato")
                     .on_hover_text("SeDebugPrivilege attivo — accesso esteso ai processi.");
             } else {
                 ui.colored_label(egui::Color32::from_rgb(148, 148, 162), "utente")
@@ -163,13 +163,13 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut
             ui.separator();
             let has_data = !matches!(snap.status, Status::NotAttached);
             if ui
-                .add_enabled(has_data, egui::Button::new("💾 Salva"))
+                .add_enabled(has_data, egui::Button::new("Salva"))
                 .on_hover_text("Salva la sessione corrente in un file .argus")
                 .clicked()
             {
                 out.push(Command::SaveCapture);
             }
-            ui.menu_button("📂 Apri", |ui| {
+            ui.menu_button("Apri", |ui| {
                 out.push(Command::RefreshCaptures);
                 if captures.is_empty() {
                     ui.label("Nessuna sessione salvata.");
@@ -186,7 +186,7 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut
                 }
             });
             ui.add_enabled_ui(has_data, |ui| {
-                ui.menu_button("⬇ Esporta", |ui| {
+                ui.menu_button("Esporta", |ui| {
                     if ui.button("CSV (metriche)").clicked() {
                         out.push(Command::Export(ExportKind::Csv));
                         ui.close_menu();
@@ -202,7 +202,7 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut
                 });
             });
             ui.add_enabled_ui(has_data, |ui| {
-                ui.menu_button("⇄ Confronta", |ui| {
+                ui.menu_button("Confronta", |ui| {
                     out.push(Command::RefreshCaptures);
                     ui.label("Baseline da confrontare con la sessione corrente:");
                     if captures.is_empty() {

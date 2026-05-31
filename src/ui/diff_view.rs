@@ -17,7 +17,7 @@ pub fn render(ui: &mut egui::Ui, diff: Option<&DiffSummary>) {
         ui.add_space(60.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                "Nessun confronto attivo. Usa «⇄ Confronta» nella barra in alto per \
+                "Nessun confronto attivo. Usa «Confronta» nella barra in alto per \
                  scegliere una baseline da confrontare con la sessione corrente.",
             );
         });
