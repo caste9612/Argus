@@ -84,6 +84,19 @@ fn etw_profiling_overhead() {
     println!("== OVERHEAD == con ETW mediana = {with_etw:.1} ms");
     println!("== OVERHEAD == overhead = {overhead:.2}% (target <1% su carichi reali)");
 
+    // Guardia di affidabilità: un overhead nettamente negativo significa che il
+    // "con ETW" è andato più veloce del baseline — impossibile se non per un
+    // fattore ambientale (la macchina è andata in sospensione tra i due batch, o
+    // il CPU ha cambiato frequenza/turbo). In quel caso la misura non è valida.
+    if overhead < -5.0 {
+        println!(
+            "== OVERHEAD == ⚠ MISURA NON AFFIDABILE: overhead negativo ({overhead:.1}%). \
+             Probabile sospensione del sistema o frequency scaling durante il test. \
+             Riesegui senza lasciare sospendere la macchina."
+        );
+        return; // non assertare su una misura corrotta
+    }
+
     // Soglia larga: il caso peggiore (loop stretto) può superare l'1%. Verifica
     // solo che non ci sia un'esplosione (bug: busy-loop nel consumer, ecc.).
     assert!(

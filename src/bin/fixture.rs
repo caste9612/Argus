@@ -61,6 +61,24 @@ fn main() {
             }
         }));
     }
+
+    // Churn di allocazioni *durante* l'esecuzione: ogni ~150 ms riserva un blocco
+    // grande (16 MB → va direttamente in VirtualAlloc, non nei pool dell'heap), lo
+    // tocca e lo libera (VirtualFree). Dà attività di memoria osservabile mentre un
+    // profiler è attaccato (così la cattura ETW non perde tutte le allocazioni).
+    let churn_start = Instant::now();
+    while churn_start.elapsed() < Duration::from_millis(hold_ms) {
+        let mut chunk = vec![0u8; 16 * 1024 * 1024];
+        let mut j = 0;
+        while j < chunk.len() {
+            chunk[j] = (j & 0xff) as u8;
+            j += 4096;
+        }
+        std::hint::black_box(chunk.as_ptr());
+        drop(chunk);
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
     for h in handles {
         let _ = h.join();
     }
