@@ -177,10 +177,14 @@ fn captures_real_stacks_from_fixture() {
         diskstats.write.ops,
         diskstats.write.avg_size()
     );
+    let qpf = argus::util::win::qpc_frequency().max(1) as f64;
+    let to_ms = |raw: u64| raw as f64 / qpf * 1000.0;
     println!(
-        "  disco resp (raw) avg/max . {} / {}",
-        diskstats.avg_response_raw(),
-        diskstats.max_response_raw()
+        "  disco latenza ms ......... p50 {:.3} · p99 {:.3} · max {:.3} (avg raw {})",
+        to_ms(diskstats.p50_response_raw()),
+        to_ms(diskstats.p99_response_raw()),
+        to_ms(diskstats.max_response_raw()),
+        diskstats.avg_response_raw()
     );
     for (d, r, w) in diskstats.disks_by_bytes().into_iter().take(4) {
         println!(

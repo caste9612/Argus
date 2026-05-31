@@ -6,6 +6,56 @@
 use crate::capture::diskio::DiskIoEvent;
 use std::collections::HashMap;
 
+/// Istogramma log2 dei tempi di risposta (in tick grezzi) per percentili
+/// approssimati a memoria costante: il bucket `i` conta i valori in `[2^i, 2^(i+1))`.
+/// O(1) per inserimento, O(64) per percentile. L'approssimazione (entro un
+/// fattore 2 nel bucket) è adeguata a un display p50/p99.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LatencyHist {
+    buckets: [u64; 64],
+    count: u64,
+}
+
+impl Default for LatencyHist {
+    fn default() -> Self {
+        Self {
+            buckets: [0; 64],
+            count: 0,
+        }
+    }
+}
+
+impl LatencyHist {
+    fn add(&mut self, rt: u64) {
+        // floor(log2(rt)); rt==0 → bucket 0.
+        let b = if rt == 0 {
+            0
+        } else {
+            63 - rt.leading_zeros() as usize
+        };
+        self.buckets[b] += 1;
+        self.count += 1;
+    }
+
+    /// Percentile `p` in [0,1] in tick grezzi (punto medio del bucket trovato).
+    fn percentile(&self, p: f64) -> u64 {
+        if self.count == 0 {
+            return 0;
+        }
+        let rank = (p * self.count as f64).ceil().max(1.0) as u64;
+        let mut acc = 0u64;
+        for (i, &c) in self.buckets.iter().enumerate() {
+            acc += c;
+            if acc >= rank {
+                // Punto medio del bucket [2^i, 2^(i+1)) ≈ 1.5 · 2^i.
+                let lo = 1u64 << i;
+                return lo.saturating_add(lo >> 1);
+            }
+        }
+        1u64 << 63
+    }
+}
+
 /// Conteggi cumulativi per una direzione (read o write).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DirStat {
@@ -36,6 +86,8 @@ pub struct DiskStats {
     /// Somma e massimo dei tempi di risposta grezzi (per una media indicativa).
     resp_sum: u64,
     resp_max: u64,
+    /// Istogramma dei tempi di risposta per i percentili (p50/p99).
+    lat: LatencyHist,
 }
 
 impl DiskStats {
@@ -64,6 +116,7 @@ impl DiskStats {
         }
         self.resp_sum += ev.response_time;
         self.resp_max = self.resp_max.max(ev.response_time);
+        self.lat.add(ev.response_time);
     }
 
     pub fn total_bytes(&self) -> u64 {
@@ -81,6 +134,16 @@ impl DiskStats {
 
     pub fn max_response_raw(&self) -> u64 {
         self.resp_max
+    }
+
+    /// Tempo di risposta al 50° percentile (mediana) in tick grezzi.
+    pub fn p50_response_raw(&self) -> u64 {
+        self.lat.percentile(0.50)
+    }
+
+    /// Tempo di risposta al 99° percentile (coda) in tick grezzi.
+    pub fn p99_response_raw(&self) -> u64 {
+        self.lat.percentile(0.99)
     }
 
     /// Dischi ordinati per byte totali decrescenti: `(disco, letture, scritture)`.
@@ -141,5 +204,23 @@ mod tests {
 
         s.clear();
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn latency_percentiles_split_fast_and_slow() {
+        let mut s = DiskStats::new();
+        // 90 operazioni veloci (~1000 tick → bucket 9 [512,1024)) e 10 lente
+        // (~1_000_000 → bucket 19 [524288,1048576)).
+        for _ in 0..90 {
+            s.on_event(&ev(0, 4096, false, 1000));
+        }
+        for _ in 0..10 {
+            s.on_event(&ev(0, 4096, false, 1_000_000));
+        }
+        // Mediana nel gruppo veloce; coda (p99) nel gruppo lento. Punto medio del
+        // bucket: 1.5·2^i (768 = 1.5·512; 786432 = 1.5·524288).
+        assert_eq!(s.p50_response_raw(), 768);
+        assert_eq!(s.p99_response_raw(), 786_432);
+        assert_eq!(s.max_response_raw(), 1_000_000);
     }
 }

@@ -6,6 +6,7 @@ use windows::Win32::Security::{
     AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
     TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
+use windows::Win32::System::Performance::QueryPerformanceFrequency;
 use windows::Win32::System::SystemInformation::GetSystemInfo;
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -28,6 +29,24 @@ impl Drop for HandleGuard {
 #[inline]
 pub fn filetime_to_u64(ft: &FILETIME) -> u64 {
     ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
+}
+
+/// Frequenza del Query Performance Counter (tick al secondo), costante dal boot.
+/// Serve a convertire i tempi in tick QPC (es. il response time del DiskIo, che
+/// usa il clock QPC del trace) in millisecondi. Cache via `OnceLock`.
+pub fn qpc_frequency() -> u64 {
+    use std::sync::OnceLock;
+    static FREQ: OnceLock<u64> = OnceLock::new();
+    *FREQ.get_or_init(|| {
+        let mut f: i64 = 0;
+        // SAFETY: scrive un i64 locale; non fallisce su hardware con QPC (sempre, da XP).
+        let ok = unsafe { QueryPerformanceFrequency(&mut f).is_ok() };
+        if ok && f > 0 {
+            f as u64
+        } else {
+            10_000_000 // fallback ragionevole (100 ns/tick) se non disponibile
+        }
+    })
 }
 
 /// Numero di processori logici visti dal sistema (min 1).

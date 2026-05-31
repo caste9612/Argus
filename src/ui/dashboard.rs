@@ -246,6 +246,23 @@ fn disk_section(ui: &mut egui::Ui, disk: &Mutex<DiskStats>) {
             );
         });
         ui.add_space(4.0);
+        // Latenza: tick QPC grezzi → ms (clock del trace = QPC). p50/p99/max.
+        let qpf = crate::util::win::qpc_frequency().max(1) as f64;
+        let to_ms = |raw: u64| raw as f64 / qpf * 1000.0;
+        ui.label(
+            egui::RichText::new(format!(
+                "Latenza per operazione:  mediana {:.2} ms  ·  p99 {:.2} ms  ·  max {:.2} ms",
+                to_ms(d.p50_response_raw()),
+                to_ms(d.p99_response_raw()),
+                to_ms(d.max_response_raw())
+            ))
+            .small(),
+        )
+        .on_hover_text(
+            "Tempo di risposta delle operazioni di disco, dal clock del trace (QPC). \
+             p99 alto = code di latenza occasionali (disco sotto pressione).",
+        );
+        ui.add_space(2.0);
         for (disk_n, r, w) in d.disks_by_bytes().into_iter().take(6) {
             ui.label(
                 egui::RichText::new(format!(
