@@ -13,6 +13,11 @@ $ErrorActionPreference = 'Continue'
 $out = Join-Path $env:TEMP 'argus_elevated_verify.txt'
 $deps = Join-Path $PSScriptRoot '..\target\release\deps'
 
+# Ferma eventuali sessioni "NT Kernel Logger" orfane (es. lasciate da un run
+# precedente interrotto o da una sospensione del sistema), così StartTrace parte
+# pulito. Errori ignorati (nessuna sessione attiva = ok).
+try { logman stop "NT Kernel Logger" -ets 2>$null | Out-Null } catch {}
+
 # Trova i binari di test piu' recenti per prefisso (l'hash cambia a ogni build).
 function Find-TestExe($prefix) {
     Get-ChildItem -Path $deps -Filter "$prefix-*.exe" -ErrorAction SilentlyContinue |
