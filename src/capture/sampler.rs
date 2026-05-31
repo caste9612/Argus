@@ -327,6 +327,7 @@ impl Sampler {
             ExportKind::Csv => export::to_csv(&cap),
             ExportKind::Folded => export::to_folded(&cap.flame),
             ExportKind::Svg => export::to_svg(&cap.flame),
+            ExportKind::Json => export::to_json(&cap),
         };
         match persist::save_export(&cap.process_name, kind.extension(), &content) {
             Ok(path) => {

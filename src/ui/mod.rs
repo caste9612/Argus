@@ -200,6 +200,10 @@ fn top_bar(ctx: &egui::Context, snap: &Snapshot, captures: &[PathBuf], out: &mut
                         out.push(Command::Export(ExportKind::Svg));
                         ui.close_menu();
                     }
+                    if ui.button("JSON (sessione completa)").clicked() {
+                        out.push(Command::Export(ExportKind::Json));
+                        ui.close_menu();
+                    }
                 });
             });
             ui.add_enabled_ui(has_data, |ui| {

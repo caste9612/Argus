@@ -336,7 +336,7 @@ mod tests {
     fn wait_breakdown_classifies_by_reason() {
         let mut t = ThreadTimeline::new();
         t.set_tracked([1].into_iter().collect()); // isola T1 (T2 è solo "l'altro")
-        // T1 gira [0,10], poi attende su mutex (WrMutex=29) [10,30] → Lock.
+                                                  // T1 gira [0,10], poi attende su mutex (WrMutex=29) [10,30] → Lock.
         t.on_cswitch(0, 1, 0, 0, 0);
         t.on_cswitch(10, 2, 1, 5, 29);
         t.on_cswitch(30, 1, 2, 5, 0); // T1 riparte: chiude Waiting[10,30] causa 29

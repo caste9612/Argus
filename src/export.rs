@@ -5,8 +5,12 @@
 //!   apribile in quei tool per condividere il flame graph.
 //! - **SVG**: un flame graph statico autonomo (rettangoli + tooltip `<title>`),
 //!   apribile in un browser.
+//! - **JSON**: l'intera sessione (metadati + metriche + flame ad albero) in un
+//!   formato strutturato per post-elaborazione programmatica.
 //!
 //! Tutte funzioni **pure** (stringa in uscita): interamente testabili, niente I/O.
+//! Il JSON è scritto a mano (niente serde): i dati sono semplici e la disciplina
+//! sulle dipendenze del progetto lo preferisce.
 
 use crate::aggregation::flame::{FlameGraph, NodeId, ROOT};
 use crate::persist::Capture;
@@ -18,6 +22,7 @@ pub enum ExportKind {
     Csv,
     Folded,
     Svg,
+    Json,
 }
 
 impl ExportKind {
@@ -26,6 +31,7 @@ impl ExportKind {
             ExportKind::Csv => "csv",
             ExportKind::Folded => "folded.txt",
             ExportKind::Svg => "svg",
+            ExportKind::Json => "json",
         }
     }
 }
@@ -143,6 +149,113 @@ pub fn to_svg(g: &FlameGraph) -> String {
     s
 }
 
+/// Sessione completa in JSON: metadati, storie metriche (array per metrica) e
+/// flame graph come albero annidato (`{name,total,own,children}`). Adatto a
+/// script di analisi. Scritto a mano (niente serde).
+pub fn to_json(c: &Capture) -> String {
+    let mut s = String::with_capacity(4096);
+    s.push('{');
+    s.push_str(&format!(
+        r#""argus_version":"{}","#,
+        json_escape(&c.argus_version)
+    ));
+    s.push_str(&format!(r#""process":"{}","#, json_escape(&c.process_name)));
+    s.push_str(&format!(r#""pid":{},"num_cpus":{},"#, c.pid, c.num_cpus));
+
+    s.push_str(r#""metrics":{"#);
+    let metrics: [(&str, &Vec<f32>); 7] = [
+        ("cpu_pct", &c.cpu_hist),
+        ("working_set_mb", &c.ws_hist),
+        ("private_mb", &c.priv_hist),
+        ("io_read_mbps", &c.io_r_hist),
+        ("io_write_mbps", &c.io_w_hist),
+        ("threads", &c.thread_hist),
+        ("handles", &c.handle_hist),
+    ];
+    for (i, (name, v)) in metrics.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(r#""{name}":{}"#, f32_array(v)));
+    }
+    s.push_str("},");
+
+    s.push_str(&format!(
+        r#""total_io_read_mb":{},"total_io_write_mb":{},"#,
+        json_f32(c.total_io_read_mb),
+        json_f32(c.total_io_write_mb)
+    ));
+
+    s.push_str(r#""flame":"#);
+    flame_json(&mut s, &c.flame, ROOT);
+    s.push('}');
+    s
+}
+
+/// Serializza il sottoalbero del flame a partire da `node` come oggetto JSON.
+fn flame_json(s: &mut String, g: &FlameGraph, node: NodeId) {
+    s.push('{');
+    let (name, total) = if node == ROOT {
+        ("root".to_string(), g.total_samples())
+    } else {
+        (json_escape(g.name_of(node)), g.total_of(node))
+    };
+    s.push_str(&format!(
+        r#""name":"{name}","total":{total},"own":{}"#,
+        g.own_of(node)
+    ));
+    let children = g.children_of(node);
+    if !children.is_empty() {
+        s.push_str(r#","children":["#);
+        for (i, &child) in children.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            flame_json(s, g, child);
+        }
+        s.push(']');
+    }
+    s.push('}');
+}
+
+/// Array JSON di f32 (valori non finiti → 0, JSON non ammette NaN/Infinity).
+fn f32_array(v: &[f32]) -> String {
+    let mut a = String::with_capacity(v.len() * 4 + 2);
+    a.push('[');
+    for (i, x) in v.iter().enumerate() {
+        if i > 0 {
+            a.push(',');
+        }
+        a.push_str(&json_f32(*x));
+    }
+    a.push(']');
+    a
+}
+
+fn json_f32(x: f32) -> String {
+    if x.is_finite() {
+        format!("{x}")
+    } else {
+        "0".to_string()
+    }
+}
+
+fn json_escape(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -238,5 +351,33 @@ mod tests {
             to_svg(&g)
         };
         assert!(svg.contains("&lt;int&gt;"));
+    }
+
+    #[test]
+    fn json_has_metadata_metrics_and_flame_tree() {
+        let json = to_json(&sample_capture());
+        // Metadati e metriche.
+        assert!(json.starts_with('{') && json.trim_end().ends_with('}'));
+        assert!(json.contains(r#""process":"x""#));
+        assert!(json.contains(r#""num_cpus":8"#));
+        assert!(json.contains(r#""cpu_pct":[1,2]"#));
+        // Flame ad albero: root → main → a → b.
+        assert!(json.contains(r#""flame":{"name":"root""#));
+        assert!(json.contains(r#""name":"main""#));
+        assert!(json.contains(r#""name":"b","total":2,"own":2"#));
+        assert!(json.contains(r#""children":["#));
+    }
+
+    #[test]
+    fn json_escapes_special_chars() {
+        let mut g = FlameGraph::new();
+        g.add_stack(&["ns::f\"x\"\\g"]);
+        let mut c = sample_capture();
+        c.flame = g;
+        let json = to_json(&c);
+        assert!(
+            json.contains(r#"ns::f\"x\"\\g"#),
+            "stringhe JSON escapate: {json}"
+        );
     }
 }
