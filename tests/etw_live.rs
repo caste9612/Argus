@@ -63,29 +63,41 @@ fn captures_real_stacks_from_fixture() {
         }
     }
 
-    // Risoluzione simboli del target (ancora vivo), best-effort.
+    // Risoluzione simboli del target (ancora vivo) e costruzione del flame come
+    // fa l'app vera (resolver → root→leaf), così si vede il merge per-funzione.
+    let mut flame = FlameGraph::new();
     let mut resolved: Vec<String> = Vec::new();
-    // Diagnostica ordine: estremi dello stack più profondo (raw, come da ETW).
     let mut order_hint = String::from("(nessuno stack profondo)");
-    if let Ok(h) = open_for_symbols(pid) {
-        if let Ok(mut r) = SymbolResolver::for_process(h.raw(), true) {
-            for s in samples.iter().take(80) {
-                for &addr in s.frames.iter().take(4) {
-                    let name = r.resolve(addr);
-                    if !name.starts_with("0x") {
-                        resolved.push(name.to_string());
-                    }
+    let resolver = open_for_symbols(pid)
+        .ok()
+        .and_then(|h| SymbolResolver::for_process(h.raw(), true).ok());
+    if let Some(mut r) = resolver {
+        for s in &samples {
+            let names: Vec<_> = s.frames.iter().rev().map(|&a| r.resolve(a)).collect();
+            flame.add_stack(&names);
+        }
+        for s in samples.iter().take(120) {
+            for &addr in s.frames.iter().take(4) {
+                let name = r.resolve(addr);
+                if !name.starts_with("0x") {
+                    resolved.push(name.to_string());
                 }
             }
-            let mut lines = Vec::new();
-            for s in samples.iter().filter(|s| s.frames.len() >= 4).take(6) {
-                let first = r.resolve(*s.frames.first().unwrap());
-                let last = r.resolve(*s.frames.last().unwrap());
-                lines.push(format!("[0]={first}  ||  [ultimo]={last}"));
-            }
-            if !lines.is_empty() {
-                order_hint = lines.join("\n                ");
-            }
+        }
+        let mut lines = Vec::new();
+        for s in samples.iter().filter(|s| s.frames.len() >= 4).take(6) {
+            let first = r.resolve(*s.frames.first().unwrap());
+            let last = r.resolve(*s.frames.last().unwrap());
+            lines.push(format!("[0]={first}  ||  [ultimo]={last}"));
+        }
+        if !lines.is_empty() {
+            order_hint = lines.join("\n                ");
+        }
+    } else {
+        // Senza resolver: flame da indirizzi grezzi (graceful degradation).
+        for s in &samples {
+            let names: Vec<String> = s.frames.iter().rev().map(|a| format!("0x{a:x}")).collect();
+            flame.add_stack(&names);
         }
     }
 
@@ -93,13 +105,6 @@ fn captures_real_stacks_from_fixture() {
     drop(profiler);
     let _ = child.kill();
     let _ = child.wait();
-
-    // Costruisci un flame dagli indirizzi grezzi (root→leaf) per provare la pipe.
-    let mut flame = FlameGraph::new();
-    for s in &samples {
-        let names: Vec<String> = s.frames.iter().rev().map(|a| format!("0x{a:x}")).collect();
-        flame.add_stack(&names);
-    }
 
     // --- Diagnostica leggibile ---
     let max_depth = samples.iter().map(|s| s.frames.len()).max().unwrap_or(0);

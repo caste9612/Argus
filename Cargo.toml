@@ -15,6 +15,7 @@ parking_lot = "0.12"
 arc-swap = "1.7"
 crossbeam-channel = "0.5"
 regex = "1"          # ricerca nel flame graph; deps transitive già presenti
+rustc-demangle = "0.1" # nomi leggibili dei simboli Rust nel flame graph
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

@@ -1,27 +1,34 @@
-//! Symbol resolution via DbgHelp: indirizzo → `"modulo!funzione+0xNN"`.
+//! Symbol resolution via DbgHelp: indirizzo → `"modulo!funzione"` (demangled).
 //!
 //! DbgHelp **non è thread-safe**: tutte le chiamate per un dato handle devono
 //! essere serializzate. Il resolver è perciò pensato per essere posseduto da un
-//! solo thread (l'aggregatore in Fase 2). Se la risoluzione fallisce (PDB
-//! mancante, modulo non caricato, …) si ripiega sull'indirizzo grezzo: mai un
-//! panic, mai un nome inventato (docs/06-reliability.md, graceful degradation).
+//! solo thread (l'aggregatore). Se la risoluzione fallisce (PDB mancante, ecc.)
+//! si ripiega su `modulo!0xADDR` o `0xADDR`: mai un panic, mai un nome inventato
+//! (docs/06-reliability.md, graceful degradation).
 //!
-//! Per i simboli del processo *target* la strategia definitiva (Fase 2, sessione
-//! ETW) sarà caricare i moduli da disco via gli eventi Image/Load — qui il
-//! resolver è già pronto a operare su un handle di processo (usato anche dai
-//! test, che risolvono i simboli di sé stessi).
+//! Per risolvere i nomi di funzione del *target* (non solo dei moduli di sistema,
+//! che vengono dagli export): si passa a `SymInitialize` il **search path** = la
+//! cartella dell'eseguibile, e si **caricano esplicitamente i moduli** del
+//! processo (PSAPI `EnumProcessModulesEx` → `SymLoadModuleExW`) dai loro path su
+//! disco, così i `.pdb` accanto ai binari vengono trovati. I nomi Rust sono
+//! demangled (`rustc-demangle`). Per il flame si aggrega **per funzione** (niente
+//! displacement), così IP diversi nella stessa funzione confluiscono in un nodo.
 
 use crate::util::error::ArgusError;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{BOOL, HANDLE};
+use windows::core::{PCWSTR, PWSTR};
+use windows::Win32::Foundation::{BOOL, HANDLE, HMODULE};
 use windows::Win32::System::Diagnostics::Debug::{
-    SymCleanup, SymFromAddrW, SymGetModuleInfoW64, SymInitializeW, SymSetOptions,
+    SymCleanup, SymFromAddrW, SymGetModuleInfoW64, SymInitializeW, SymLoadModuleExW, SymSetOptions,
     IMAGEHLP_MODULEW64, SYMBOL_INFOW, SYMOPT_DEFERRED_LOADS, SYMOPT_FAIL_CRITICAL_ERRORS,
-    SYMOPT_LOAD_LINES, SYMOPT_UNDNAME,
+    SYMOPT_LOAD_LINES, SYMOPT_UNDNAME, SYM_LOAD_FLAGS,
 };
+use windows::Win32::System::ProcessStatus::{
+    EnumProcessModulesEx, GetModuleFileNameExW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO,
+};
+use windows::Win32::System::Threading::{QueryFullProcessImageNameW, PROCESS_NAME_FORMAT};
 
 /// Massimo numero di caratteri per un nome di simbolo (come `dbghelp.h`).
 const MAX_SYM_NAME: usize = 2000;
@@ -89,8 +96,15 @@ impl SymbolResolver {
     ///
     /// L'handle deve restare valido per tutta la vita del resolver.
     pub fn for_process(handle: HANDLE, invade: bool) -> Result<Self, ArgusError> {
+        // Search path = cartella dell'eseguibile del target, così DbgHelp trova i
+        // suoi `.pdb` accanto al binario (i nomi di sistema vengono dagli export).
+        let search = process_image_dir(handle);
+        let search_ptr = search
+            .as_ref()
+            .map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr()));
         // SAFETY: opzioni globali di DbgHelp + init per l'handle fornito. In caso
         // di errore non costruiamo il resolver, quindi nessun SymCleanup pendente.
+        // `search` resta vivo per tutta la chiamata.
         unsafe {
             SymSetOptions(
                 SYMOPT_UNDNAME
@@ -98,12 +112,77 @@ impl SymbolResolver {
                     | SYMOPT_LOAD_LINES
                     | SYMOPT_FAIL_CRITICAL_ERRORS,
             );
-            SymInitializeW(handle, PCWSTR::null(), BOOL::from(invade))?;
+            SymInitializeW(handle, search_ptr, BOOL::from(invade))?;
         }
-        Ok(Self {
+        let resolver = Self {
             handle,
             cache: Cache::new(),
-        })
+        };
+        // Carica esplicitamente i moduli del processo dai path su disco: l'invade
+        // da solo non basta a far risolvere i nomi di funzione del target.
+        resolver.load_modules();
+        Ok(resolver)
+    }
+
+    /// Enumera i moduli del processo (PSAPI) e ne carica i simboli in DbgHelp dai
+    /// path su disco, così i `.pdb` risolvono i nomi di funzione. Best-effort: i
+    /// moduli che falliscono restano risolti solo a livello di indirizzo. Richiede
+    /// un handle con `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ`.
+    fn load_modules(&self) {
+        // SAFETY: enumerazione moduli + SymLoadModuleExW per ciascuno; buffer
+        // locali dimensionati, errori per-modulo ignorati.
+        unsafe {
+            let mut needed: u32 = 0;
+            if EnumProcessModulesEx(
+                self.handle,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+                LIST_MODULES_ALL,
+            )
+            .is_err()
+                || needed == 0
+            {
+                return;
+            }
+            let count = (needed as usize / size_of::<HMODULE>()).clamp(1, 4096);
+            let mut mods = vec![HMODULE::default(); count];
+            if EnumProcessModulesEx(
+                self.handle,
+                mods.as_mut_ptr(),
+                (count * size_of::<HMODULE>()) as u32,
+                &mut needed,
+                LIST_MODULES_ALL,
+            )
+            .is_err()
+            {
+                return;
+            }
+            let got = (needed as usize / size_of::<HMODULE>()).min(count);
+            for &m in &mods[..got] {
+                let mut info = MODULEINFO::default();
+                if GetModuleInformation(self.handle, m, &mut info, size_of::<MODULEINFO>() as u32)
+                    .is_err()
+                {
+                    continue;
+                }
+                let mut name = [0u16; 260];
+                let len = GetModuleFileNameExW(self.handle, m, &mut name);
+                if len == 0 {
+                    continue;
+                }
+                let _ = SymLoadModuleExW(
+                    self.handle,
+                    HANDLE::default(),
+                    PCWSTR(name.as_ptr()),
+                    PCWSTR::null(),
+                    info.lpBaseOfDll as u64,
+                    info.SizeOfImage,
+                    None,
+                    SYM_LOAD_FLAGS(0),
+                );
+            }
+        }
     }
 
     /// Risolve un indirizzo in un nome leggibile, con caching. Non fallisce mai:
@@ -118,20 +197,20 @@ impl SymbolResolver {
     }
 
     fn resolve_uncached(&self, addr: u64) -> String {
+        // Per il flame graph aggreghiamo **per funzione**: nessun displacement,
+        // così gli IP diversi nella stessa funzione confluiscono nello stesso nodo.
         let func = self.symbol_at(addr);
         let module = self.module_at(addr);
         match (module, func) {
-            (Some(m), Some((f, 0))) => format!("{m}!{f}"),
-            (Some(m), Some((f, d))) => format!("{m}!{f}+0x{d:x}"),
-            (None, Some((f, 0))) => f,
-            (None, Some((f, d))) => format!("{f}+0x{d:x}"),
+            (Some(m), Some(f)) => format!("{m}!{f}"),
+            (None, Some(f)) => f,
             (Some(m), None) => format!("{m}!0x{addr:x}"),
             (None, None) => format!("0x{addr:016x}"),
         }
     }
 
-    /// Nome di funzione + displacement dall'inizio del simbolo, se risolvibile.
-    fn symbol_at(&self, addr: u64) -> Option<(String, u64)> {
+    /// Nome di funzione (demangled, senza displacement), se risolvibile.
+    fn symbol_at(&self, addr: u64) -> Option<String> {
         let mut buf = [0u64; SYM_BUF_U64];
         // SAFETY: `buf` è allineato a 8 (Vec<u64>) e abbastanza grande per
         // SYMBOL_INFOW + MaxNameLen caratteri. Impostiamo i campi dimensionali
@@ -145,11 +224,13 @@ impl SymbolResolver {
             SymFromAddrW(self.handle, addr, Some(&mut disp), info).ok()?;
             let len = ((*info).NameLen as usize).min(MAX_SYM_NAME);
             let name_ptr = std::ptr::addr_of!((*info).Name) as *const u16;
-            let name = String::from_utf16_lossy(std::slice::from_raw_parts(name_ptr, len));
-            if name.is_empty() {
+            let raw = String::from_utf16_lossy(std::slice::from_raw_parts(name_ptr, len));
+            if raw.is_empty() {
                 None
             } else {
-                Some((name, disp))
+                // Demangle dei nomi Rust ({:#} omette l'hash finale); no-op per
+                // C/C++ già undecorati da SYMOPT_UNDNAME.
+                Some(format!("{:#}", rustc_demangle::demangle(&raw)))
             }
         }
     }
@@ -186,6 +267,29 @@ impl Drop for SymbolResolver {
             let _ = SymCleanup(self.handle);
         }
     }
+}
+
+/// Cartella dell'eseguibile del processo, come stringa wide nul-terminata (per
+/// il search path dei simboli). `None` se non determinabile.
+fn process_image_dir(handle: HANDLE) -> Option<Vec<u16>> {
+    let mut buf = [0u16; 1024];
+    let mut len = buf.len() as u32;
+    // SAFETY: buffer e `len` locali; QueryFullProcessImageNameW scrive il path e
+    // aggiorna `len`. Nessun puntatore sopravvive alla chiamata.
+    unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
+        .ok()?;
+    }
+    let path = &buf[..(len as usize).min(buf.len())];
+    let sep = path.iter().rposition(|&c| c == b'\\' as u16)?;
+    let mut dir = path[..sep].to_vec();
+    dir.push(0);
+    Some(dir)
 }
 
 #[cfg(test)]
