@@ -12,6 +12,7 @@ mod process_list;
 pub mod theme;
 mod timeline_view;
 
+use crate::aggregation::diskstats::DiskStats;
 use crate::aggregation::flame::{FlameGraph, NodeId};
 use crate::aggregation::timeline::ThreadTimeline;
 use crate::aggregation::{Snapshot, Status};
@@ -66,6 +67,7 @@ pub fn render(
     procs: &[ProcessInfo],
     flame: &Mutex<FlameGraph>,
     timeline: &Mutex<ThreadTimeline>,
+    disk: &Mutex<DiskStats>,
     captures: &[PathBuf],
     diff: Option<&DiffSummary>,
     out: &mut Vec<Command>,
@@ -81,7 +83,7 @@ pub fn render(
         });
         ui.separator();
         match state.tab {
-            Tab::Dashboard => dashboard::render(ui, snap),
+            Tab::Dashboard => dashboard::render(ui, snap, disk),
             Tab::Flame => flame::render(
                 ui,
                 snap,

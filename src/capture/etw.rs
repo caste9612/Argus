@@ -22,6 +22,9 @@
 //!   (vedi `docs/06-reliability.md`, edge case ETW di Fase 2).
 
 use crate::capture::cswitch::{parse_cswitch, OPCODE_CSWITCH, THREAD_GUID};
+use crate::capture::diskio::{
+    parse_disk_io, DiskIoEvent, DISK_IO_GUID, OPCODE_DISK_READ, OPCODE_DISK_WRITE,
+};
 use crate::util::error::ArgusError;
 use crossbeam_channel::Sender;
 use std::collections::HashSet;
@@ -38,10 +41,10 @@ use windows::Win32::Foundation::{
 use windows::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, OpenTraceW, ProcessTrace, StartTraceW, TraceSetInformation,
     TraceStackTracingInfo, CLASSIC_EVENT_ID, CONTROLTRACE_HANDLE, EVENT_RECORD,
-    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_CSWITCH, EVENT_TRACE_FLAG_PROFILE,
-    EVENT_TRACE_LOGFILEW, EVENT_TRACE_LOGFILEW_0, EVENT_TRACE_LOGFILEW_1, EVENT_TRACE_PROPERTIES,
-    EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
-    PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_CSWITCH, EVENT_TRACE_FLAG_DISK_IO,
+    EVENT_TRACE_FLAG_PROFILE, EVENT_TRACE_LOGFILEW, EVENT_TRACE_LOGFILEW_0, EVENT_TRACE_LOGFILEW_1,
+    EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE,
+    PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
 };
 
 /// GUID di controllo del kernel logger (è il `Wnode.Guid` della sessione di
@@ -95,6 +98,7 @@ pub struct SwitchEvent {
 pub enum EtwEvent {
     Stack(StackSample),
     Switch(SwitchEvent),
+    Disk(DiskIoEvent),
 }
 
 /// Dimensione del prefisso fisso del payload StackWalk:
@@ -166,8 +170,10 @@ impl KernelTraceProps {
         k.props.LoggerNameOffset = size_of::<EVENT_TRACE_PROPERTIES>() as u32;
         if real_time {
             k.props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-            // PROFILE = sample-profile CPU (flame); CSWITCH = context switch (timeline).
-            k.props.EnableFlags = EVENT_TRACE_FLAG_PROFILE | EVENT_TRACE_FLAG_CSWITCH;
+            // PROFILE = sample-profile CPU (flame); CSWITCH = context switch
+            // (timeline); DISK_IO = operazioni di disco completate (diskstats).
+            k.props.EnableFlags =
+                EVENT_TRACE_FLAG_PROFILE | EVENT_TRACE_FLAG_CSWITCH | EVENT_TRACE_FLAG_DISK_IO;
         }
         let wide = KERNEL_LOGGER_NAME.encode_utf16().collect::<Vec<u16>>();
         k.name[..wide.len()].copy_from_slice(&wide);
@@ -438,6 +444,15 @@ unsafe extern "system" fn event_callback(record: *mut EVENT_RECORD) {
                     old_wait_reason: cs.old_wait_reason,
                 };
                 let _ = ctx.tx.try_send(EtwEvent::Switch(ev));
+            }
+        }
+    } else if provider == DISK_IO_GUID {
+        // DiskIo è di sistema (niente PID nel payload): raccogliamo tutte le
+        // operazioni Read/Write completate durante la cattura.
+        let opcode = r.EventHeader.EventDescriptor.Opcode;
+        if opcode == OPCODE_DISK_READ || opcode == OPCODE_DISK_WRITE {
+            if let Some(ev) = parse_disk_io(data, opcode, 8) {
+                let _ = ctx.tx.try_send(EtwEvent::Disk(ev));
             }
         }
     }

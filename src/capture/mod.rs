@@ -4,6 +4,7 @@
 //! snapshot Toolhelp. Niente injection, niente hook. Vedi `docs/02-architecture.md`.
 
 pub mod cswitch;
+pub mod diskio;
 pub mod etw;
 pub mod process;
 pub mod profiling;

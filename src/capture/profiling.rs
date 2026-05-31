@@ -10,8 +10,10 @@
 //! La cattura ETW richiede privilegi di amministratore: `start` propaga
 //! `Err(Permission)` se mancano, e il chiamante mostra un banner (polling-only).
 
+use crate::aggregation::diskstats::DiskStats;
 use crate::aggregation::flame::FlameGraph;
 use crate::aggregation::timeline::ThreadTimeline;
+use crate::capture::diskio::DiskIoEvent;
 use crate::capture::etw::{EtwEvent, EtwProfiler, StackSample, SwitchEvent};
 use crate::capture::process::{open_for_symbols, thread_ids, ProcessHandle};
 use crate::capture::symbols::SymbolResolver;
@@ -44,6 +46,7 @@ impl ProfilingSession {
         pid: u32,
         flame: Arc<Mutex<FlameGraph>>,
         timeline: Arc<Mutex<ThreadTimeline>>,
+        disk: Arc<Mutex<DiskStats>>,
     ) -> Result<Self, ArgusError> {
         let (tx, rx) = crossbeam_channel::bounded::<EtwEvent>(CHANNEL_CAP);
         // TID del target ora (snapshot): i CSwitch ETW non portano il PID.
@@ -57,7 +60,7 @@ impl ProfilingSession {
         let sym = open_for_symbols(pid).ok();
         let aggregator = std::thread::Builder::new()
             .name("argus-aggregator".into())
-            .spawn(move || aggregate(rx, flame, timeline, sym))
+            .spawn(move || aggregate(rx, flame, timeline, disk, sym))
             .map_err(|e| ArgusError::Internal(format!("spawn aggregatore fallito: {e}")))?;
 
         Ok(Self {
@@ -87,6 +90,7 @@ fn aggregate(
     rx: Receiver<EtwEvent>,
     flame: Arc<Mutex<FlameGraph>>,
     timeline: Arc<Mutex<ThreadTimeline>>,
+    disk: Arc<Mutex<DiskStats>>,
     sym: Option<ProcessHandle>,
 ) {
     // `resolver` è dichiarato dopo `sym`: alla fine viene droppato per primo
@@ -98,16 +102,18 @@ fn aggregate(
     // Buffer riusati per il batch (warm path), preservando l'ordine.
     let mut stacks: Vec<Vec<Arc<str>>> = Vec::with_capacity(BATCH_MAX);
     let mut switches: Vec<SwitchEvent> = Vec::with_capacity(BATCH_MAX);
+    let mut disks: Vec<DiskIoEvent> = Vec::with_capacity(BATCH_MAX);
 
     // Esce quando il canale si chiude (ETW fermato).
     while let Ok(first) = rx.recv() {
         stacks.clear();
         switches.clear();
-        classify(&mut resolver, first, &mut stacks, &mut switches);
+        disks.clear();
+        classify(&mut resolver, first, &mut stacks, &mut switches, &mut disks);
         // Drena ciò che è già pronto per limitare la frequenza di lock.
         for _ in 1..BATCH_MAX {
             match rx.try_recv() {
-                Ok(e) => classify(&mut resolver, e, &mut stacks, &mut switches),
+                Ok(e) => classify(&mut resolver, e, &mut stacks, &mut switches, &mut disks),
                 Err(_) => break,
             }
         }
@@ -129,20 +135,29 @@ fn aggregate(
                 );
             }
         }
+        if !disks.is_empty() {
+            let mut d = disk.lock();
+            for ev in &disks {
+                d.on_event(ev);
+            }
+        }
     }
     info!("aggregatore ETW terminato");
 }
 
-/// Smista un evento: stack risolto (→ flame) o context-switch (→ timeline).
+/// Smista un evento: stack risolto (→ flame), context-switch (→ timeline) o
+/// operazione di disco (→ diskstats).
 fn classify(
     resolver: &mut Option<SymbolResolver>,
     event: EtwEvent,
     stacks: &mut Vec<Vec<Arc<str>>>,
     switches: &mut Vec<SwitchEvent>,
+    disks: &mut Vec<DiskIoEvent>,
 ) {
     match event {
         EtwEvent::Stack(s) => stacks.push(resolve(resolver, &s)),
         EtwEvent::Switch(sw) => switches.push(sw),
+        EtwEvent::Disk(ev) => disks.push(ev),
     }
 }
 

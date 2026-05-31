@@ -71,6 +71,7 @@ impl eframe::App for ArgusApp {
             &procs,
             &self.shared.flame,
             &self.shared.timeline,
+            &self.shared.disk,
             &captures,
             (*diff).as_ref(),
             &mut self.cmd_buf,

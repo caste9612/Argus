@@ -5,6 +5,7 @@
 //! flame graph (`flame`), che aggrega gli stack sample ETW in un albero pesato.
 //! L'aggregatore come thread separato arriverà con gli eventi ad alta frequenza.
 
+pub mod diskstats;
 pub mod flame;
 pub mod timeline;
 

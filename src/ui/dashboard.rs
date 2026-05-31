@@ -1,8 +1,10 @@
 //! Pannello centrale: KPI card + grafici time-series del processo collegato.
 
 use super::kpi;
+use crate::aggregation::diskstats::DiskStats;
 use crate::aggregation::{Snapshot, Status};
 use eframe::egui;
+use parking_lot::Mutex;
 
 // Palette (vedi docs/05-ui-design.md).
 const BLUE: egui::Color32 = egui::Color32::from_rgb(124, 185, 255);
@@ -11,11 +13,15 @@ const TEAL: egui::Color32 = egui::Color32::from_rgb(127, 224, 185);
 const AMBER: egui::Color32 = egui::Color32::from_rgb(240, 198, 116);
 const PINK: egui::Color32 = egui::Color32::from_rgb(255, 165, 224);
 
-pub fn render(ui: &mut egui::Ui, snap: &Snapshot) {
+pub fn render(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>) {
     match &snap.status {
         Status::NotAttached | Status::Error(_) => placeholder(ui),
-        Status::Running | Status::Exited | Status::Replay(_) => dashboard(ui, snap),
+        Status::Running | Status::Exited | Status::Replay(_) => dashboard(ui, snap, disk),
     }
+}
+
+fn mb(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 fn placeholder(ui: &mut egui::Ui) {
@@ -29,7 +35,7 @@ fn placeholder(ui: &mut egui::Ui) {
     });
 }
 
-fn dashboard(ui: &mut egui::Ui, snap: &Snapshot) {
+fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -143,5 +149,61 @@ fn dashboard(ui: &mut egui::Ui, snap: &Snapshot) {
                     snap.total_io_read_mb, snap.total_io_write_mb
                 ));
             });
+
+            ui.add_space(8.0);
+            disk_section(ui, disk);
         });
+}
+
+/// Dettaglio disco dagli eventi DiskIo ETW (di sistema): mostrato solo quando
+/// ci sono dati (cattura ETW attiva e disco usato).
+fn disk_section(ui: &mut egui::Ui, disk: &Mutex<DiskStats>) {
+    let d = disk.lock();
+    if d.is_empty() {
+        return;
+    }
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Disco fisico (ETW)").strong());
+            ui.weak("· attività di sistema durante la cattura, non solo del target");
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            kpi::card(
+                ui,
+                "Disco lettura",
+                &format!("{:.1} MB", mb(d.read.bytes)),
+                TEAL,
+                &format!(
+                    "{} operazioni · {} KB/op in media",
+                    d.read.ops,
+                    d.read.avg_size() / 1024
+                ),
+            );
+            kpi::card(
+                ui,
+                "Disco scrittura",
+                &format!("{:.1} MB", mb(d.write.bytes)),
+                AMBER,
+                &format!(
+                    "{} operazioni · {} KB/op in media",
+                    d.write.ops,
+                    d.write.avg_size() / 1024
+                ),
+            );
+        });
+        ui.add_space(4.0);
+        for (disk_n, r, w) in d.disks_by_bytes().into_iter().take(6) {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Disco {disk_n}:  letti {:.1} MB ({} op)  ·  scritti {:.1} MB ({} op)",
+                    mb(r.bytes),
+                    r.ops,
+                    mb(w.bytes),
+                    w.ops
+                ))
+                .small(),
+            );
+        }
+    });
 }

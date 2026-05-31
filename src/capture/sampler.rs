@@ -1,6 +1,7 @@
 //! Il sampler: thread in background che campiona il target a 10 Hz e pubblica
 //! `Snapshot` immutabili via `ArcSwap`. Riceve comandi dalla UI via canale.
 
+use crate::aggregation::diskstats::DiskStats;
 use crate::aggregation::flame::FlameGraph;
 use crate::aggregation::timeline::ThreadTimeline;
 use crate::aggregation::{FlameStatus, ProcessMeta, Snapshot, Status};
@@ -61,6 +62,8 @@ pub struct Shared {
     pub flame: Arc<Mutex<FlameGraph>>,
     /// Timeline degli stati thread (Fase 3), popolata dai CSwitch ETW.
     pub timeline: Arc<Mutex<ThreadTimeline>>,
+    /// Statistiche disco (Fase 2/3), popolate dagli eventi DiskIo ETW.
+    pub disk: Arc<Mutex<DiskStats>>,
     /// Elenco dei file `.argus` salvati, dal più recente (Fase 4).
     pub captures: ArcSwap<Vec<PathBuf>>,
     /// Risultato dell'ultimo confronto (diff) baseline vs corrente (Fase 4).
@@ -75,6 +78,7 @@ impl Shared {
             processes: ArcSwap::from_pointee(Vec::new()),
             flame: Arc::new(Mutex::new(FlameGraph::new())),
             timeline: Arc::new(Mutex::new(ThreadTimeline::new())),
+            disk: Arc::new(Mutex::new(DiskStats::new())),
             captures: ArcSwap::from_pointee(Vec::new()),
             diff: ArcSwap::from_pointee(None),
         })
@@ -237,8 +241,12 @@ impl Sampler {
     /// (chiamato da `attach` dopo `stop_profiling`). Senza privilegi admin la
     /// sessione non parte: lo segnaliamo in `flame_status` e si prosegue.
     fn start_profiling(&mut self, pid: u32) {
-        match ProfilingSession::start(pid, self.shared.flame.clone(), self.shared.timeline.clone())
-        {
+        match ProfilingSession::start(
+            pid,
+            self.shared.flame.clone(),
+            self.shared.timeline.clone(),
+            self.shared.disk.clone(),
+        ) {
             Ok(sess) => {
                 self.profiling = Some(sess);
                 self.snap.flame_status = FlameStatus::Active;
@@ -264,6 +272,7 @@ impl Sampler {
         if clear_flame {
             self.shared.flame.lock().clear();
             self.shared.timeline.lock().clear();
+            self.shared.disk.lock().clear();
         }
         self.snap.flame_status = FlameStatus::Off;
     }

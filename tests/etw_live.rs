@@ -11,6 +11,7 @@
 //! `fixture` CPU-bound. Controlla che arrivino stack reali (flame) e context
 //! switch (timeline), e prova a risolvere i simboli del target vivo (best-effort).
 
+use argus::aggregation::diskstats::DiskStats;
 use argus::aggregation::flame::FlameGraph;
 use argus::aggregation::timeline::ThreadTimeline;
 use argus::capture::etw::{EtwEvent, EtwProfiler};
@@ -46,10 +47,26 @@ fn captures_real_stacks_from_fixture() {
     };
     println!("sessione ETW avviata, raccolgo ~3 s di eventi…");
 
+    // Genera attività disco da validare (scrive e sincronizza un file temporaneo),
+    // in un thread a parte così gira durante la finestra di cattura.
+    let disk_work = std::thread::spawn(|| {
+        use std::io::Write;
+        let path = std::env::temp_dir().join("argus_diskio_probe.bin");
+        if let Ok(mut f) = std::fs::File::create(&path) {
+            let buf = vec![0xABu8; 1024 * 1024];
+            for _ in 0..16 {
+                let _ = f.write_all(&buf);
+            }
+            let _ = f.sync_all(); // forza il flush su disco → eventi DiskIo write
+        }
+        let _ = std::fs::remove_file(&path);
+    });
+
     // Raccogli ~3 s: gli stack vanno in `samples`, i context-switch costruiscono
-    // la timeline in tempo reale (preservando l'ordine).
+    // la timeline in tempo reale, le operazioni di disco in `diskstats`.
     let mut samples = Vec::new();
     let mut switch_count = 0usize;
+    let mut diskstats = DiskStats::new();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
@@ -65,9 +82,11 @@ fn captures_real_stacks_from_fixture() {
                         sw.old_wait_reason,
                     );
                 }
+                EtwEvent::Disk(ev) => diskstats.on_event(&ev),
             }
         }
     }
+    let _ = disk_work.join();
 
     // Risoluzione simboli del target (ancora vivo) e costruzione del flame come
     // fa l'app vera (resolver → root→leaf), così si vede il merge per-funzione.
@@ -140,6 +159,35 @@ fn captures_real_stacks_from_fixture() {
         timeline.thread_count(),
         t1.saturating_sub(t0)
     );
+    // Disco (di sistema): validazione live del layout DiskIo. Valori plausibili
+    // (dimensioni multiple di 512/4K, MB sensati) confermano il parser.
+    let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
+    println!(
+        "  disco lettura ............ {:.2} MB in {} op ({} B/op)",
+        mb(diskstats.read.bytes),
+        diskstats.read.ops,
+        diskstats.read.avg_size()
+    );
+    println!(
+        "  disco scrittura .......... {:.2} MB in {} op ({} B/op)",
+        mb(diskstats.write.bytes),
+        diskstats.write.ops,
+        diskstats.write.avg_size()
+    );
+    println!(
+        "  disco resp (raw) avg/max . {} / {}",
+        diskstats.avg_response_raw(),
+        diskstats.max_response_raw()
+    );
+    for (d, r, w) in diskstats.disks_by_bytes().into_iter().take(4) {
+        println!(
+            "      disco {d}: R {:.2} MB ({} op) · W {:.2} MB ({} op)",
+            mb(r.bytes),
+            r.ops,
+            mb(w.bytes),
+            w.ops
+        );
+    }
 
     // --- Asserzioni: la pipe ETW funziona (flame + timeline) ---
     assert!(
