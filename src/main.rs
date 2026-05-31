@@ -48,7 +48,7 @@ fn main() -> eframe::Result {
         "Argus",
         options,
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            argus::ui::theme::apply(&cc.egui_ctx);
             Ok(Box::new(ArgusApp::new(initial_pid, initial_tab)))
         }),
     )

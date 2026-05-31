@@ -31,7 +31,13 @@ pub fn card(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32, h
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).small().weak());
-                ui.label(egui::RichText::new(value).heading().color(color));
+                // Numeri in monospace (docs/05-ui-design): cifre allineate, lettura stabile.
+                ui.label(
+                    egui::RichText::new(value)
+                        .monospace()
+                        .size(20.0)
+                        .color(color),
+                );
             });
         })
         .response

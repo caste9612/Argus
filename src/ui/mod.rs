@@ -9,6 +9,7 @@ mod diff_view;
 mod flame;
 mod kpi;
 mod process_list;
+pub mod theme;
 mod timeline_view;
 
 use crate::aggregation::flame::{FlameGraph, NodeId};
