@@ -3,7 +3,7 @@
 **Profiler portatile GPU-accelerato per Windows.**
 Vedi cosa fa davvero il tuo software, senza rallentarlo.
 
-> ✅ **Stato:** Fase 1 (polling) ✓ · Fase 2 (ETW + **flame graph**) ✓ verificata come admin · Fase 4 (**record/diff/export**) ✓ · Fase 3 (**timeline** stati-thread) ✓ live; allocazioni e lock da fare. Profiling completo (flame + timeline) richiede l'esecuzione **come amministratore** (ETW). Come si usa: [guida](docs/10-uso.md); dettagli: [roadmap](docs/07-roadmap.md) e [decisioni](docs/09-decisions.md).
+> ✅ **Stato:** Fase 1 (polling) ✓ · Fase 2 (ETW + **flame graph**) ✓ admin · Fase 4 (**record/diff/export**, +JSON) ✓ · Fase 3 (**timeline** + **lock contention**) ✓ live · **Disk I/O detail** ✓ validato live · overhead misurato **2.21%** (caso peggiore). Restano: allocazioni heap + page faults (rinviati). Profiling completo (flame/timeline/disk) richiede l'esecuzione **come amministratore** (ETW). Come si usa: [guida](docs/10-uso.md); dettagli: [roadmap](docs/07-roadmap.md), [decisioni](docs/09-decisions.md), [backlog](docs/11-backlog.md).
 
 ## Cos'è
 

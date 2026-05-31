@@ -37,13 +37,19 @@ Da riga di comando puoi collegarti subito: `argus.exe --attach <PID>`
 
 - **Metriche** — KPI card + grafici time-series (CPU, working set/private,
   I/O lettura/scrittura, thread, handle). Ogni elemento ha un tooltip che spiega
-  cosa significa.
+  cosa significa. Con cattura ETW attiva (admin) appare anche una sezione
+  **"Disco fisico (ETW)"**: byte letti/scritti, n° operazioni e dimensione media
+  per disco (attività di sistema durante la cattura).
 - **Flame graph** — *dove* il processo spende tempo CPU (richiede admin).
   - **Click** su un frame per zoomare; **zoom out** torna alla radice.
   - **Cerca (regex)**: evidenzia le funzioni che combaciano, attenua le altre.
   - **Hover**: nome, numero di sample e percentuali (totale e self).
-- **Timeline** — Gantt: quando ogni thread del target è in esecuzione
-  (verde), dai context switch (richiede admin). I thread più attivi in cima.
+- **Timeline** — Gantt: stato di ogni thread del target nel tempo, dai context
+  switch (richiede admin). Colori: **verde** = in esecuzione (Running), **ambra**
+  = pronto ma in coda per la CPU (Ready), **blu** = in attesa (Waiting). In alto la
+  riga **"Attese per causa"** riassume quanto tempo è speso in **Lock** (contesa di
+  sincronizzazione), **I/O**, **Idle**; passa il mouse su un segmento per causa e
+  durata. I thread più attivi in cima.
 - **Diff** — confronto "prima/dopo" tra due sessioni salvate: grafici
   sovrapposti (A grigio = baseline, B blu = corrente) e le funzioni che cambiano
   di più (movers).
@@ -57,7 +63,8 @@ Nella barra in alto (attivi quando c'è una sessione):
 - **Apri** — riapre una sessione salvata in *replay* (la rivedi come live).
 - **Esporta** — CSV (metriche), folded-stacks (apribile in
   [speedscope](https://www.speedscope.app/) / flamegraph.pl), SVG (flame graph
-  statico, apribile nel browser). Vanno in `%LOCALAPPDATA%\Argus\exports`.
+  statico, apribile nel browser), JSON (sessione completa: metadati + metriche +
+  flame ad albero, per analisi programmatica). Vanno in `%LOCALAPPDATA%\Argus\exports`.
 - **Confronta** — scegli una sessione `.argus` come baseline; il risultato
   appare nella tab **Diff**.
 
@@ -75,6 +82,8 @@ Workflow tipico "ottimizzazione": collega → *Salva* (prima) → ottimizza il c
 - Se un processo è protetto (antivirus, PPL) o di sistema, l'attach può fallire
   con "accesso negato": serve l'esecuzione come amministratore (e alcuni restano
   comunque inaccessibili).
-- I nomi delle funzioni nel flame graph dipendono dai simboli (`.pdb`): i moduli
-  di sistema (ntdll, kernel32) si risolvono col nome; per il codice del target
-  servono i suoi `.pdb` (al momento, in mancanza, si vede `modulo!0xINDIRIZZO`).
+- I nomi delle funzioni nel flame graph si risolvono via DbgHelp dai moduli
+  caricati: i moduli di sistema (ntdll, kernel32) e il **codice del target** con
+  simboli disponibili mostrano il nome (es. `fixture!core::fmt::...`); dove il
+  simbolo manca si vede `modulo!0xINDIRIZZO` (degrado graceful). Per nomi completi
+  del tuo codice, compila con i `.pdb` accanto all'eseguibile.

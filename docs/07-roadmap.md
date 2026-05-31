@@ -141,11 +141,17 @@ Stato sintetico a fine del lavoro autonomo. **Verde = fatto e verificato**
 
 ### ✅ Fatto e verificato
 - **Fase 1** completa (polling, dashboard, lista processi).
-- **Fase 2** implementata: flame graph, symbol resolution, parser+sessione ETW,
-  aggregatore, tab Flame (zoom/drill/ricerca regex/hover). Degrado graceful senza admin.
-- **Fase 4** completa: formato `.argus`, record/replay, diff, export (CSV/folded/SVG).
-- **Fase 3** fondamenta: parser `CSwitch` + struttura dati timeline.
-- 40 unit + 3 integration test verdi, clippy/fmt puliti, release 10.62 MB.
+- **Fase 2** completa e verificata live: flame graph, **symbol resolution on-disk
+  del target** (nomi funzione `fixture!...`, merge per-funzione, D14), parser+sessione
+  ETW, aggregatore, tab Flame (zoom/drill/ricerca regex/hover). Degrado graceful senza admin.
+- **Fase 4** completa: formato `.argus`, record/replay, diff, export (CSV/folded/SVG/**JSON**).
+- **Fase 3** timeline + **lock contention** (KWAIT_REASON → categorie + breakdown UI),
+  verificata live.
+- **Disk I/O detail** (provider DiskIo) — parser+aggregazione, sezione Dashboard,
+  **layout validato live** (16.4 MB scrittura = probe).
+- **Overhead misurato**: 2.21% (loop CPU-bound stretto, caso peggiore; <1% su carichi reali).
+- **Infra**: CI GitHub Actions (windows: fmt/clippy/test/build + cargo-deny), tema scuro.
+- **50 unit + 3 integration + 2 ignored (admin) test verdi**, clippy/fmt puliti, release ~10.6 MB.
 
 ### ✅ Cattura ETW live — VERIFICATA come amministratore (pipeline + GUI)
 Con il fix del privilegio (D20) la pipeline ETW è stata collaudata end-to-end con un run
@@ -158,17 +164,22 @@ base, foglie in cima), con "cattura ETW attiva". Restano: **misura overhead** (<
 
 Comodità aggiunta: `argus.exe --attach <pid>` si collega subito e apre la tab Flame.
 
-### ⬜ Da implementare per chiudere le fasi (con indicazioni)
-- **Fase 2 rifinitura**: risoluzione simboli del target *on-disk* via eventi ETW
-  Image/Load (più robusta dell'handle vivo, vedi D14).
-- ✅ **Fase 3 timeline live**: FATTA e verificata (CSwitch via ETW → `ThreadTimeline`
-  filtrata sui TID del target via Toolhelp, tab Gantt). Resta solo la resa a video del
-  Gantt da confermare (lo screenshot automatico è bloccato da UIPI sulle finestre elevate).
-- **Fase 3 allocazioni/lock**: provider `HeapTrace`/`Kernel-Memory` per le allocazioni
-  (+ allocation flame graph) e analisi `CSwitch` su wait object per la contesa lock.
+### ⬜ Da implementare (rinviato, con indicazioni)
+- **Fase 3 allocazioni heap**: provider `HeapTrace`/`Microsoft-Windows-Kernel-Memory`
+  per le allocazioni + allocation flame graph + leak detection. **Richiede un secondo
+  tipo di sessione ETW** (non il NT Kernel Logger classico usato ora): è la ragione
+  principale del rinvio — è un'aggiunta architetturale, non solo un flag.
+- **Fase 3 page faults**: provider `PageFault` (rate + stack) — flag sullo stesso
+  kernel logger, simile a DiskIo; aggiungibile sul modello di `capture/diskio.rs`.
+- **Disk I/O — rifinitura**: nome file per operazione (correlazione `FileObject`→nome
+  via eventi `FileIo`/`FileRundown`) e percentili di latenza calibrati (serve la
+  frequenza QPC per convertire `HighResResponseTime` in ms). Il core (byte/op/disco)
+  è fatto e validato.
 - **Fase 5**: PMU/GPU — richiede driver/SDK vendor; rivalutare la fattibilità in user mode.
-- **Nice-to-have**: compressione zstd del formato `.argus`; export PNG/JSON; file dialog
-  nativo (ora auto-path + lista in-app, D19); regex→fuzzy nella ricerca flame.
+- **Stabilità 8h**: nessuna crescita RAM/handle in run lungo — non eseguibile in questa
+  sede (durata); harness overhead riutilizzabile come base.
+- **Nice-to-have**: compressione `.argus` (rinviata per disciplina dipendenze, file
+  minuscoli, D18); export PNG (ridondante con l'SVG); file dialog nativo; regex→fuzzy.
 
 ---
 

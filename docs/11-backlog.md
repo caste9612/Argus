@@ -4,6 +4,29 @@ Analisi dei gap a valle del lavoro su Fasi 1–4 + timeline. Confronto tra lo st
 del codice e gli obiettivi/standard dei doc (`01-vision`, `05-ui-design`,
 `06-reliability`, `04-metrics`, `07-roadmap`). Prioritizzato per impatto/sforzo.
 
+## Stato (aggiornato)
+
+**✅ Fatto e verificato in questa sessione:**
+- P1 — simboli on-disk del target + flame per-funzione; rimozione emoji.
+- P2 — **lock contention** (KWAIT_REASON → categorie + breakdown UI + tooltip);
+  **timeline ricca** (Ready/Waiting); **Disk I/O detail** (provider DiskIo,
+  parser+aggregazione+UI, layout validato live).
+- P3 — **tema/palette** Argus (`ui/theme.rs`) + numeri monospace.
+- P4 — **overhead misurato** (2.21% caso peggiore, `tests/overhead.rs`).
+- P5 — **CI** GitHub Actions + **cargo-deny** + export **JSON**.
+
+**⬜ Rinviato (con motivazione):**
+- P2 — **heap allocations**: richiede un *secondo tipo di sessione ETW*
+  (HeapTrace/Kernel-Memory), non il NT Kernel Logger classico → aggiunta
+  architetturale separata. **Page faults**: aggiungibile sul modello DiskIo.
+- P2 — Disk I/O: **nome file** per operazione (correlazione FileObject→nome) e
+  **percentili di latenza** calibrati (serve frequenza QPC) — il core è fatto.
+- P3 — animazioni, flame color per tipo, process tree, hover line-chart: minori.
+- P4 — stabilità 8h (durata), GPU device lost / low-memory / target 32-bit.
+- P5 — **zstd** (.argus minuscoli, libreria C → supply-chain; D18/D24) ed export
+  **PNG** (ridondante con SVG): non fatti per disciplina dipendenze.
+- P6 — PMU/GPU/multi-process: esplorativi, richiedono driver/SDK vendor.
+
 ## P1 — Qualità/correttezza che mina il valore centrale
 
 - **[grande] Simboli del target → nomi di funzione** (D14). Oggi i frame del

@@ -26,12 +26,17 @@ video — vedi handoff in [`07-roadmap.md`](07-roadmap.md).
 record/replay (D19), diff tra capture (`diff.rs`, tab Diff), export
 CSV/folded/SVG (`export.rs`). Tutto testato (round-trip, export, diff).
 
-**Fase 3 — allocazioni/lock/timeline: fondamenta pronte.** Parser `CSwitch`
-(`capture/cswitch.rs`) e struttura dati timeline (`aggregation/timeline.rs`),
-puri e testati. Cattura live + Gantt + allocazioni + lock: da fare (admin-gated),
-vedi handoff.
+**Fase 3 — timeline + lock contention: live e verificata.** Timeline stati-thread
+(Running/Ready/Waiting) dai `CSwitch`, filtrata sui TID del target; **lock
+contention** dalla causa d'attesa `KWAIT_REASON` (D21). **Disk I/O detail** (D22)
+sullo stesso kernel logger, validato live. Restano **allocazioni heap** (secondo
+tipo di sessione ETW) e **page faults** — vedi handoff.
 
-**Test totali**: 40 unit + 3 integration verdi; clippy/fmt puliti; release 10.62 MB.
+**Overhead** misurato (D23): 2.21% su loop CPU-bound stretto. **Infra**: export
+JSON, CI, cargo-deny, tema (D24).
+
+**Test totali**: 50 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
+puliti; release ~10.6 MB.
 
 ## Decisioni
 
@@ -239,6 +244,43 @@ corretto, flame orientato bene. Simboli: moduli di sistema risolti coi nomi
 (D14) — ora si vede `modulo!0xADDR` (degrado graceful).
 **Conseguenza**: la cattura ETW live funziona da admin; coperta da un test
 d'integrazione `#[ignore]`d ri-eseguibile elevato.
+
+### D21 — Lock contention via `KWAIT_REASON`, non un provider extra
+I `CSwitch` portano già `OldThreadWaitReason` (parsato in `cswitch.rs` ma prima
+scartato). Invece di aggiungere un provider, lo **propaghiamo** ai segmenti
+Waiting della timeline e lo **categorizziamo** (`wait_category`: Lock/IO/UserIdle/
+Preempted) dai valori dell'enum NT `KWAIT_REASON`. `wait_breakdown` quantifica la
+contesa; la UI Timeline mostra "Attese per causa" + tooltip per segmento. Costo
+quasi nullo, nessun evento in più. Verificato live (1535 CSwitch).
+
+### D22 — Disk I/O detail sullo stesso kernel logger (provider `DiskIo`)
+Aggiunto `EVENT_TRACE_FLAG_DISK_IO` alla sessione esistente (non una nuova
+sessione): `capture/diskio.rs` decodifica `DiskIo_TypedData` (TransferSize@8,
+ByteOffset@16, HighResResponseTime dopo i due puntatori), `aggregation/diskstats.rs`
+aggrega per direzione e per disco. Gli eventi sono **di sistema** (niente PID nel
+payload): misurano l'attività disco complessiva durante la cattura — etichettato
+così nella UI. **Layout validato live**: una scrittura-probe di 16 MB dà 16.4 MB
+in `diskstats.write` → offset corretti. *Rinviati*: nome file per operazione
+(serve provider `FileIo` + correlazione `FileObject`) e percentili di latenza
+calibrati (serve la frequenza QPC). Heap allocations invece **richiederebbe un
+secondo tipo di sessione** ETW → rinviato come aggiunta architetturale separata.
+
+### D23 — Overhead misurato come dilatazione a lavoro fisso
+`fixture bench` esegue un lavoro deterministico single-thread (non a tempo) e
+stampa l'elapsed; `tests/overhead.rs` (#[ignore], admin+release) confronta la
+mediana con/senza sessione ETW attiva. Il sampling kernel è system-wide, quindi
+il filtro per PID non cambia il costo: misura reale. Risultato: **2.21%** su un
+loop CPU-bound stretto — caso peggiore per il sampling (massima frequenza di
+interruzioni); il target <1% di `01-vision` vale per carichi reali con attese.
+
+### D24 — JSON/CI/cargo-deny sì, zstd/PNG no (disciplina dipendenze)
+Export **JSON** scritto a mano (niente serde): dati semplici, nessuna dipendenza.
+**CI** GitHub Actions (windows: fmt/clippy/test/build) + **cargo-deny** (licenze/
+advisory) come da `03-tech-stack`. **Non** aggiunti: compressione zstd del `.argus`
+(file minuscoli, `zstd-sys` introduce una libreria C → supply-chain; D18 lo
+rinviava già, header forward-compatible) ed export PNG (ridondante con l'SVG già
+condivisibile, `image` è un albero deps grande). Coerente con "no dipendenze
+comode" di `CLAUDE.md`.
 
 ## Questioni aperte
 

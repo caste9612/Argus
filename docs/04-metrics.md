@@ -146,3 +146,22 @@ Ogni grafico DEVE avere un tooltip che spiega in 1 riga cosa significa. Riusa il
 ### Naming
 
 Italiano per label visibili all'utente ("Memoria", "Lettura disco"), inglese per identifier nel codice (`memory_working_set`, `disk_read_rate`).
+
+## Metriche ETW profonde (Fasi 2/3) — implementate
+
+Oltre al flame graph (hot path CPU) e alla timeline stati-thread:
+
+- **Lock contention** (`aggregation/timeline.rs`). Dai `CSwitch` si legge la causa
+  d'attesa `KWAIT_REASON` del thread uscente e la si attribuisce al segmento Waiting.
+  `wait_category` la mappa in **Lock** (mutex/push lock/eventi/risorse → contesa),
+  **IO** (paging/memoria), **UserIdle** (attesa volontaria / thread-pool a riposo),
+  **Preempted**. `wait_breakdown[_of]` somma il tempo per categoria. *Insegna*: "Lock"
+  alto = i thread si contendono sincronizzazione; "Idle" alto = sano. UI: riga "Attese
+  per causa" + tooltip per segmento (es. `WrMutex`).
+- **Disk I/O detail** (`capture/diskio.rs` + `aggregation/diskstats.rs`). Provider
+  kernel `DiskIo`: per ogni operazione Read/Write completata → disco, byte, offset,
+  tempo di risposta. Aggregati per direzione e per disco fisico (byte, n° operazioni,
+  dimensione media). Eventi **di sistema** (non per-processo): misurano l'attività
+  disco complessiva durante la cattura. *Insegna*: pattern di I/O (poche grandi vs
+  molte piccole), quale disco è sotto pressione. *Rinviati*: nome file per operazione,
+  percentili di latenza calibrati. UI: sezione "Disco fisico (ETW)" in Dashboard.
