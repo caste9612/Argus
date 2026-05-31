@@ -1,13 +1,41 @@
 //! Carico di lavoro deterministico per i test d'integrazione di Argus.
 //!
-//! Uso: `fixture [threads] [alloc_mb] [hold_ms]` (default 4, 64, 3000).
-//! Alloca e "tocca" la memoria (così entra nel working set), poi brucia CPU su
-//! N thread per `hold_ms`. Comportamento prevedibile che i test possono misurare.
+//! Due modalità:
+//! - `fixture [threads] [alloc_mb] [hold_ms]` (default 4, 64, 3000): alloca e
+//!   "tocca" la memoria, poi brucia CPU su N thread per `hold_ms`. Per i test
+//!   che osservano un processo vivo (flame, timeline).
+//! - `fixture bench [Miter]` (default 3000 milioni): lavoro **fisso** (non a
+//!   tempo) su un solo thread, stampa `BENCH elapsed_ms=… checksum=…`. Serve a
+//!   misurare l'overhead di Argus come dilatazione del tempo a parità di lavoro
+//!   (vedi `tests/overhead.rs` e docs/06-reliability.md).
 
 use std::time::{Duration, Instant};
 
+/// Un passo di lavoro non ottimizzabile via (LCG + black_box).
+#[inline(always)]
+fn step(x: u64) -> u64 {
+    let y = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+    std::hint::black_box(y)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    // Modalità bench: lavoro fisso, autotemporizzato, single-thread.
+    if args.get(1).map(String::as_str) == Some("bench") {
+        let miter: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3000);
+        let iters = miter.saturating_mul(1_000_000);
+        let start = Instant::now();
+        let mut x: u64 = 0x9e3779b97f4a7c15;
+        for _ in 0..iters {
+            x = step(x);
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        // checksum stampato così il lavoro non può essere eliminato dall'ottimizzatore.
+        println!("BENCH elapsed_ms={ms:.3} checksum={x}");
+        return;
+    }
+
     let threads: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(4);
     let alloc_mb: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(64);
     let hold_ms: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3000);
@@ -28,8 +56,7 @@ fn main() {
             let mut x: u64 = 0x9e3779b97f4a7c15;
             while start.elapsed() < Duration::from_millis(hold_ms) {
                 for _ in 0..10_000 {
-                    x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
-                    std::hint::black_box(x);
+                    x = step(x);
                 }
             }
         }));
