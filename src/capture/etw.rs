@@ -84,6 +84,8 @@ pub struct SwitchEvent {
     pub old_tid: u32,
     /// Stato in cui passa il thread uscente (KTHREAD_STATE) → Ready/Waiting/…
     pub old_state: i8,
+    /// Causa dell'attesa del thread uscente (KWAIT_REASON) → lock/io/idle.
+    pub old_wait_reason: i8,
 }
 
 /// Evento ETW consegnato all'aggregatore: uno stack sample (flame graph) o un
@@ -433,6 +435,7 @@ unsafe extern "system" fn event_callback(record: *mut EVENT_RECORD) {
                     new_tid: cs.new_tid,
                     old_tid: cs.old_tid,
                     old_state: cs.old_state,
+                    old_wait_reason: cs.old_wait_reason,
                 };
                 let _ = ctx.tx.try_send(EtwEvent::Switch(ev));
             }
