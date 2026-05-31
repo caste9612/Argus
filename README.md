@@ -43,6 +43,7 @@ Tutta la progettazione vive in [`docs/`](docs/) — leggili in ordine se vuoi ca
 8. [Sviluppo](docs/08-development.md) — workflow di lavoro
 9. [Decisioni](docs/09-decisions.md) — log delle scelte e stato attuale
 10. [Uso](docs/10-uso.md) — **come si usa Argus** (guida pratica)
+11. [Backlog](docs/11-backlog.md) — feature/implementazioni mancanti, prioritizzate
 
 Sviluppatori (umani e AI) che collaborano su Argus devono leggere **`CLAUDE.md`** in radice per le convenzioni.
 
