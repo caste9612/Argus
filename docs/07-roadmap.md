@@ -102,10 +102,12 @@ e lock (provider aggiuntivi) → vedi "Lavoro residuo".
 **Obiettivo**: trasformare Argus da live-only a strumento di analisi post-mortem.
 
 **Deliverable**:
-- ✅ Formato file `.argus` proprietario (binario, versioned con magic header) — `persist.rs`. *zstd rinviato* (D18)
+- ✅ Formato file `.argus` proprietario (binario, versionato; **v2** persiste anche
+  disco/memoria/lock, lettura retro-compatibile v1 — D26) — `persist.rs`. *zstd rinviato* (D18)
 - ✅ Record + replay dell'intera sessione (Salva/Apri, stato `Replay`)
 - ✅ Modalità "diff" tra due capture (grafici sovrapposti + funzioni "movers") — `diff.rs`, tab Diff
-- ✅ Export (CSV time series, folded stacks per speedscope, SVG flame) — `export.rs`. *PNG/JSON non fatti*
+- ✅ Export (CSV time series, folded stacks per speedscope, SVG flame, **JSON**
+  completo con wait/memory/disk) — `export.rs`. *PNG rinviato (ridondante con SVG)*
 - ⬜ Snapshot manuali / sharing HTML (l'SVG è già condivisibile; resto non fatto)
 
 **DoD**:
@@ -148,12 +150,20 @@ Stato sintetico a fine del lavoro autonomo. **Verde = fatto e verificato**
 - **Fase 3** timeline + **lock contention** (KWAIT_REASON → categorie + breakdown UI),
   verificata live.
 - **Disk I/O detail** (provider DiskIo) — parser+aggregazione, sezione Dashboard,
-  **layout validato live** (16.4 MB scrittura = probe).
+  **layout validato live** (16.4 MB scrittura = probe). **Latenza p50/p99/max in ms**
+  (istogramma + calibrazione QPC); resta solo il nome-file per operazione.
 - **Memoria** (provider PageFault): hard page fault + VirtualAlloc/Free del target,
   sezione Dashboard, **validato live** (19 VirtualAlloc = 304 MB, granularità 16 MB).
+- **Recording/export completi**: formato `.argus` **v2** (persiste disco/memoria/lock,
+  lettura retro-compatibile v1) + export **JSON** con wait/memory/disk. Round-trip testato.
 - **Overhead misurato**: ~2.0–2.2% (loop CPU-bound stretto, caso peggiore; <1% su reali).
 - **Infra**: CI GitHub Actions (windows: fmt/clippy/test/build + cargo-deny), tema scuro.
-- **54 unit + 3 integration + 2 ignored (admin) test verdi**, clippy/fmt puliti, release ~10.6 MB.
+- **56 unit + 3 integration + 2 ignored (admin) test verdi**, clippy/fmt puliti, release ~10.6 MB.
+
+> ⚠️ **Verifica in sospeso** (ambiente, non codice): la conferma *a video/dal vivo*
+> della latenza disco p50/p99 in ms è rimasta da fare perché ETW non ripartiva dopo
+> una sospensione lunga del sistema (serviva un riavvio). Rieseguire
+> `scripts/elevated_verify.ps1` da admin su una macchina con ETW sano.
 
 ### ✅ Cattura ETW live — VERIFICATA come amministratore (pipeline + GUI)
 Con il fix del privilegio (D20) la pipeline ETW è stata collaudata end-to-end con un run
@@ -175,12 +185,18 @@ Comodità aggiunta: `argus.exe --attach <pid>` si collega subito e apre la tab F
   L'alternativa compatibile **è già implementata**: VirtualAlloc/Free (granularità di
   pagina) + hard fault, vedi sopra. Un'eventuale "modalità lancio con heap tracing"
   sarebbe un modello d'uso diverso (Argus avvia il target), da valutare a parte.
+- **Replay a video delle metriche profonde**: il `.argus` v2 e il JSON **già
+  contengono** attese/lock, memoria e disco, ma la UI di *replay* mostra ancora solo
+  metriche+flame. Per vederle in replay va ripopolato `shared.disk`/`shared.mem` (e
+  un riepilogo attese) dalla `Capture` caricata in `sampler::open_capture`, e la
+  Dashboard dovrebbe leggere quei dati anche in stato `Replay`. È il prossimo passo
+  naturale (i dati ci sono già, manca solo il wiring di visualizzazione).
 - **Disk I/O — rifinitura**: nome file per operazione (correlazione `FileObject`→nome
-  via eventi `FileIo`/`FileRundown`) e percentili di latenza calibrati (serve la
-  frequenza QPC per convertire `HighResResponseTime` in ms). Il core (byte/op/disco)
-  è fatto e validato.
+  via eventi `FileIo`/`FileRundown`). Latenza p50/p99 in ms: **fatta** (D26).
 - **Allocation flame graph**: si potrebbe abilitare lo stack-walk anche per gli eventi
-  VirtualAlloc (come per SampleProfile) → stack delle allocazioni. Aggiunta mirata.
+  VirtualAlloc (come per SampleProfile) → stack delle allocazioni. Nota: serve
+  correlare i `StackWalk` agli eventi VirtualAlloc per timestamp, senza inquinare il
+  flame CPU. Aggiunta mirata.
 - **Fase 5**: PMU/GPU — richiede driver/SDK vendor; rivalutare la fattibilità in user mode.
 - **Stabilità 8h**: nessuna crescita RAM/handle in run lungo — non eseguibile in questa
   sede (durata); harness overhead riutilizzabile come base.

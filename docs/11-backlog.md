@@ -12,18 +12,24 @@ del codice e gli obiettivi/standard dei doc (`01-vision`, `05-ui-design`,
   **timeline ricca** (Ready/Waiting); **Disk I/O detail** (provider DiskIo,
   parser+aggregazione+UI, layout validato live); **memoria** (provider PageFault:
   hard page fault + VirtualAlloc/Free del target, validato live).
+- P2 — **latenza disco p50/p99/max in ms** (istogramma + calibrazione QPC).
 - P3 — **tema/palette** Argus (`ui/theme.rs`) + numeri monospace.
 - P4 — **overhead misurato** (~2.0–2.2% caso peggiore, `tests/overhead.rs`).
-- P5 — **CI** GitHub Actions + **cargo-deny** + export **JSON**.
+- P5 — **CI** GitHub Actions + **cargo-deny** + export **JSON** completo (wait/mem/disk)
+  + formato **`.argus` v2** (persiste disco/memoria/lock, retro-compatibile v1).
 
 **⬜ Rinviato / fuori scope (con motivazione):**
 - P2 — **heap allocations a livello `HeapAlloc`**: **fuori scope by design** (D25) —
   richiede l'opt-in del target al lancio (IFEO/relaunch), incompatibile con l'attach
   a un processo già avviato senza injection. L'alternativa compatibile (VirtualAlloc/
   Free, granularità di pagina) **è implementata**.
-- P2 — Disk I/O: **nome file** per operazione (correlazione FileObject→nome) e
-  **percentili di latenza** calibrati (serve frequenza QPC) — il core è fatto.
-  **Allocation flame graph**: stack-walk sugli eventi VirtualAlloc (aggiunta mirata).
+- P2 — Disk I/O: **nome file** per operazione (correlazione FileObject→nome). I
+  percentili di latenza in ms sono **fatti**. **Allocation flame graph**: stack-walk
+  sugli eventi VirtualAlloc (aggiunta mirata, serve correlazione per timestamp).
+- **Replay a video delle metriche profonde**: i dati (disco/memoria/lock) sono già
+  nel `.argus` v2 e nel JSON, ma la UI di replay mostra ancora solo metriche+flame.
+  Prossimo passo: ripopolare `shared.disk`/`shared.mem` in `open_capture` e far
+  leggere alla Dashboard quei dati anche in stato `Replay`.
 - P3 — animazioni, flame color per tipo, process tree, hover line-chart: minori.
 - P4 — stabilità 8h (durata), GPU device lost / low-memory / target 32-bit.
 - P5 — **zstd** (.argus minuscoli, libreria C → supply-chain; D18/D24) ed export

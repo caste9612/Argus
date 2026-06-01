@@ -3,7 +3,7 @@
 **Profiler portatile GPU-accelerato per Windows.**
 Vedi cosa fa davvero il tuo software, senza rallentarlo.
 
-> ✅ **Stato:** Fase 1 (polling) ✓ · Fase 2 (ETW + **flame graph**) ✓ admin · Fase 4 (**record/diff/export**, +JSON) ✓ · Fase 3 (**timeline** + **lock contention** + **memoria/disco**) ✓ validati live · overhead misurato **~2%** (caso peggiore). Profiling completo (flame/timeline/disk/memoria) richiede l'esecuzione **come amministratore** (ETW). Il tracking heap a livello `HeapAlloc` è fuori scope (richiederebbe injection/relaunch); VirtualAlloc è l'alternativa fornita. Come si usa: [guida](docs/10-uso.md); dettagli: [roadmap](docs/07-roadmap.md), [decisioni](docs/09-decisions.md), [backlog](docs/11-backlog.md).
+> ✅ **Stato:** Fase 1 (polling) ✓ · Fase 2 (ETW + **flame graph**) ✓ admin · Fase 4 (**record/diff/export**: `.argus` v2 + JSON, coprono anche disco/memoria/lock) ✓ · Fase 3 (**timeline** + **lock contention** + **memoria** + **disco** con latenza p50/p99) ✓ validati live · overhead misurato **~2%** (caso peggiore). Profiling completo (flame/timeline/disk/memoria) richiede l'esecuzione **come amministratore** (ETW). Il tracking heap a livello `HeapAlloc` è fuori scope (richiederebbe injection/relaunch); VirtualAlloc è l'alternativa fornita. Come si usa: [guida](docs/10-uso.md); dettagli: [roadmap](docs/07-roadmap.md), [decisioni](docs/09-decisions.md), [backlog](docs/11-backlog.md).
 
 ## Cos'è
 

@@ -38,8 +38,9 @@ Da riga di comando puoi collegarti subito: `argus.exe --attach <PID>`
 - **Metriche** — KPI card + grafici time-series (CPU, working set/private,
   I/O lettura/scrittura, thread, handle). Ogni elemento ha un tooltip che spiega
   cosa significa. Con cattura ETW attiva (admin) appare anche una sezione
-  **"Disco fisico (ETW)"**: byte letti/scritti, n° operazioni e dimensione media
-  per disco (attività di sistema durante la cattura), e una sezione **"Memoria
+  **"Disco fisico (ETW)"**: byte letti/scritti, n° operazioni, dimensione media e
+  **latenza per operazione** (mediana/p99/max in ms) per disco (attività di sistema
+  durante la cattura), e una sezione **"Memoria
   (ETW)"** del target: hard page fault (page-in da disco), VirtualAlloc (memoria
   virtuale riservata) e saldo netto alloc−free (un saldo positivo e crescente
   segnala possibile crescita/leak).
@@ -67,7 +68,9 @@ Nella barra in alto (attivi quando c'è una sessione):
 - **Esporta** — CSV (metriche), folded-stacks (apribile in
   [speedscope](https://www.speedscope.app/) / flamegraph.pl), SVG (flame graph
   statico, apribile nel browser), JSON (sessione completa: metadati + metriche +
-  flame ad albero, per analisi programmatica). Vanno in `%LOCALAPPDATA%\Argus\exports`.
+  flame ad albero + attese/lock + memoria + disco, per analisi programmatica).
+  Vanno in `%LOCALAPPDATA%\Argus\exports`. Le sessioni `.argus` salvate (v2)
+  includono anch'esse disco/memoria/lock.
 - **Confronta** — scegli una sessione `.argus` come baseline; il risultato
   appare nella tab **Diff**.
 

@@ -34,9 +34,10 @@ live. Il tracking heap a livello `HeapAlloc` resta **fuori scope** per il vincol
 no-injection (D25).
 
 **Overhead** misurato (D23): ~2.0–2.2% su loop CPU-bound stretto. **Infra**: export
-JSON, CI, cargo-deny, tema (D24).
+JSON, CI, cargo-deny, tema (D24). **Latenza disco p50/p99** + **formato `.argus` v2**
+(persiste disco/memoria/lock, retro-compatibile v1) + JSON completo (D26).
 
-**Test totali**: 54 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
+**Test totali**: 56 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
 puliti; release ~10.6 MB.
 
 ## Decisioni
@@ -299,6 +300,22 @@ abbia il tracing abilitato **al lancio** (IFEO `TracingFlags`, o `tracelog -heap
 cosa impossibile da attivare retroattivamente su un processo arbitrario già avviato
 senza iniettare codice o rilanciarlo. VirtualAlloc (granularità di pagina) è
 l'alternativa compatibile che forniamo; heap-level resta fuori scope by design.
+
+### D26 — `.argus` v2: persiste le metriche ETW profonde; latenza disco p50/p99
+Due completamenti di deliverable previsti:
+- **Latenza disco**: `DiskStats` tiene un istogramma log2 dei tempi di risposta
+  (memoria costante, O(1) insert) → `p50`/`p99` raw; `util/win::qpc_frequency`
+  (cache `OnceLock`) calibra i tick QPC del trace in **ms**. UI: riga "Latenza per
+  operazione" nella sezione Disco. Resta solo il **nome file** per operazione
+  (correlazione `FileObject`→nome via provider `FileIo`).
+- **Formato `.argus` v2**: `Capture` ora porta `wait` (`WaitBreakdown`), `mem`
+  (`MemStats`) e `disk` (`DiskSnapshot`, proiezione read-only serializzabile),
+  scritti in coda al flame. La **lettura accetta anche v1** (campi nuovi → default):
+  backward-compatible. L'export **JSON** include `wait`/`memory`/`disk`. Coperto da
+  test (round-trip v2, lettura v1, JSON). **Nota**: il *replay a video* di queste
+  metriche non è ancora cablato (la UI di replay mostra metriche+flame; i dati
+  profondi sono nel file e nel JSON, ma per mostrarli a schermo va ripopolato
+  `shared.disk/mem` in replay) — vedi `07-roadmap.md`.
 
 ## Questioni aperte
 
