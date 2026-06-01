@@ -291,11 +291,26 @@ impl Sampler {
     }
 
     /// Salva la sessione corrente (snapshot + flame) su file `.argus`.
+    /// Costruisce una `Capture` dallo stato live: flame + metriche ETW profonde
+    /// (attese/lock dalla timeline, memoria, disco). Lock presi e rilasciati in
+    /// sequenza (nessun annidamento → nessun rischio di deadlock).
+    fn current_capture(&self) -> Capture {
+        let wait = self.shared.timeline.lock().wait_breakdown();
+        let mem = *self.shared.mem.lock();
+        let disk = self.shared.disk.lock().snapshot();
+        let flame = self.shared.flame.lock();
+        Capture::from_live(
+            &self.snap,
+            &flame,
+            env!("CARGO_PKG_VERSION"),
+            wait,
+            mem,
+            disk,
+        )
+    }
+
     fn save_capture(&mut self) {
-        let cap = {
-            let flame = self.shared.flame.lock();
-            Capture::from_live(&self.snap, &flame, env!("CARGO_PKG_VERSION"))
-        };
+        let cap = self.current_capture();
         match persist::save_capture_file(&cap) {
             Ok(path) => {
                 info!("sessione salvata in {path:?}");
@@ -314,10 +329,7 @@ impl Sampler {
     fn diff_capture(&mut self, baseline: PathBuf) {
         match persist::load_capture_file(&baseline) {
             Ok(a) => {
-                let b = {
-                    let flame = self.shared.flame.lock();
-                    Capture::from_live(&self.snap, &flame, env!("CARGO_PKG_VERSION"))
-                };
+                let b = self.current_capture();
                 let summary = diff::diff(&a, &b);
                 self.shared.diff.store(Arc::new(Some(summary)));
                 self.snap.notice = Some(format!(
@@ -334,10 +346,7 @@ impl Sampler {
 
     /// Esporta la sessione corrente nel formato richiesto.
     fn export_session(&mut self, kind: ExportKind) {
-        let cap = {
-            let flame = self.shared.flame.lock();
-            Capture::from_live(&self.snap, &flame, env!("CARGO_PKG_VERSION"))
-        };
+        let cap = self.current_capture();
         let content = match kind {
             ExportKind::Csv => export::to_csv(&cap),
             ExportKind::Folded => export::to_folded(&cap.flame),

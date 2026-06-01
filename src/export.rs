@@ -186,6 +186,42 @@ pub fn to_json(c: &Capture) -> String {
         json_f32(c.total_io_write_mb)
     ));
 
+    // Metriche ETW profonde (v2): attese/lock, memoria, disco.
+    s.push_str(&format!(
+        r#""wait":{{"lock":{},"io":{},"user_idle":{},"preempted":{},"other":{}}},"#,
+        c.wait.lock, c.wait.io, c.wait.user_idle, c.wait.preempted, c.wait.other
+    ));
+    s.push_str(&format!(
+        r#""memory":{{"hard_faults":{},"hard_fault_bytes":{},"valloc_count":{},"valloc_bytes":{},"vfree_count":{},"vfree_bytes":{}}},"#,
+        c.mem.hard_faults,
+        c.mem.hard_fault_bytes,
+        c.mem.valloc_count,
+        c.mem.valloc_bytes,
+        c.mem.vfree_count,
+        c.mem.vfree_bytes
+    ));
+    s.push_str(&format!(
+        r#""disk":{{"read_bytes":{},"read_ops":{},"write_bytes":{},"write_ops":{},"latency_raw":{{"avg":{},"p50":{},"p99":{},"max":{}}},"per_disk":["#,
+        c.disk.read.bytes,
+        c.disk.read.ops,
+        c.disk.write.bytes,
+        c.disk.write.ops,
+        c.disk.avg_raw,
+        c.disk.p50_raw,
+        c.disk.p99_raw,
+        c.disk.max_raw
+    ));
+    for (i, (d, r, w)) in c.disk.per_disk.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            r#"{{"disk":{},"read_bytes":{},"read_ops":{},"write_bytes":{},"write_ops":{}}}"#,
+            d, r.bytes, r.ops, w.bytes, w.ops
+        ));
+    }
+    s.push_str("]},");
+
     s.push_str(r#""flame":"#);
     flame_json(&mut s, &c.flame, ROOT);
     s.push('}');
@@ -300,6 +336,22 @@ mod tests {
             total_io_read_mb: 0.0,
             total_io_write_mb: 0.0,
             flame: sample_flame(),
+            wait: crate::aggregation::timeline::WaitBreakdown {
+                lock: 42,
+                ..Default::default()
+            },
+            mem: crate::aggregation::memstats::MemStats {
+                hard_faults: 7,
+                ..Default::default()
+            },
+            disk: crate::aggregation::diskstats::DiskSnapshot {
+                read: crate::aggregation::diskstats::DirStat {
+                    bytes: 4096,
+                    ops: 1,
+                },
+                p99_raw: 123,
+                ..Default::default()
+            },
         }
     }
 
@@ -366,6 +418,11 @@ mod tests {
         assert!(json.contains(r#""name":"main""#));
         assert!(json.contains(r#""name":"b","total":2,"own":2"#));
         assert!(json.contains(r#""children":["#));
+        // Metriche ETW profonde (v2) presenti nel JSON.
+        assert!(json.contains(r#""wait":{"lock":42,"#));
+        assert!(json.contains(r#""memory":{"hard_faults":7,"#));
+        assert!(json.contains(r#""disk":{"read_bytes":4096,"read_ops":1,"#));
+        assert!(json.contains(r#""p99":123"#));
     }
 
     #[test]

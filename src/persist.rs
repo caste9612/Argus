@@ -7,7 +7,10 @@
 //! a una versione successiva del formato — vedi D18 in docs/09-decisions.md: il
 //! byte `compression` nell'header lascia spazio a introdurla senza rotture.
 
+use crate::aggregation::diskstats::{DirStat, DiskSnapshot};
 use crate::aggregation::flame::{FlameGraph, NodeId};
+use crate::aggregation::memstats::MemStats;
+use crate::aggregation::timeline::WaitBreakdown;
 use crate::aggregation::{FlameStatus, ProcessMeta, Snapshot, Status};
 use crate::util::bytes::{
     put_f32, put_f32_slice, put_str, put_u16, put_u32, put_u64, put_u8, ByteReader,
@@ -18,7 +21,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAGIC: &[u8; 8] = b"ARGUSCAP";
-const FORMAT_VERSION: u16 = 1;
+/// v2 aggiunge le metriche ETW profonde (attese/lock, memoria, disco) in coda.
+/// La lettura accetta anche la v1 (campi nuovi → default).
+const FORMAT_VERSION: u16 = 2;
 const COMPRESSION_NONE: u8 = 0;
 
 /// Una sessione catturata, sufficiente a riprodurla (replay statico): metadati,
@@ -39,11 +44,24 @@ pub struct Capture {
     pub total_io_read_mb: f32,
     pub total_io_write_mb: f32,
     pub flame: FlameGraph,
+    /// Metriche ETW profonde (v2): suddivisione attese (lock), memoria, disco.
+    /// Default su file v1 o sessioni senza cattura ETW.
+    pub wait: WaitBreakdown,
+    pub mem: MemStats,
+    pub disk: DiskSnapshot,
 }
 
 impl Capture {
-    /// Costruisce una `Capture` dallo stato live (snapshot + flame clonato).
-    pub fn from_live(snap: &Snapshot, flame: &FlameGraph, argus_version: &str) -> Capture {
+    /// Costruisce una `Capture` dallo stato live (snapshot + flame clonato +
+    /// metriche ETW profonde già proiettate: attese/lock, memoria, disco).
+    pub fn from_live(
+        snap: &Snapshot,
+        flame: &FlameGraph,
+        argus_version: &str,
+        wait: WaitBreakdown,
+        mem: MemStats,
+        disk: DiskSnapshot,
+    ) -> Capture {
         let (pid, process_name) = match &snap.attached {
             Some(m) => (m.pid, m.name.clone()),
             None => (0, "sessione".to_string()),
@@ -63,6 +81,9 @@ impl Capture {
             total_io_read_mb: snap.total_io_read_mb,
             total_io_write_mb: snap.total_io_write_mb,
             flame: flame.clone(),
+            wait,
+            mem,
+            disk,
         }
     }
 
@@ -217,7 +238,44 @@ pub fn write_capture(c: &Capture) -> Vec<u8> {
     put_f32(&mut b, c.total_io_write_mb);
 
     write_flame(&mut b, &c.flame);
+    write_extras(&mut b, c); // v2
     b
+}
+
+/// Scrive le metriche ETW profonde (v2): attese (5×u64), memoria (6×u64),
+/// disco (read/write + per-disco + percentili).
+fn write_extras(b: &mut Vec<u8>, c: &Capture) {
+    // WaitBreakdown
+    put_u64(b, c.wait.lock);
+    put_u64(b, c.wait.io);
+    put_u64(b, c.wait.user_idle);
+    put_u64(b, c.wait.preempted);
+    put_u64(b, c.wait.other);
+    // MemStats
+    put_u64(b, c.mem.hard_faults);
+    put_u64(b, c.mem.hard_fault_bytes);
+    put_u64(b, c.mem.valloc_count);
+    put_u64(b, c.mem.valloc_bytes);
+    put_u64(b, c.mem.vfree_count);
+    put_u64(b, c.mem.vfree_bytes);
+    // DiskSnapshot
+    put_dir(b, c.disk.read);
+    put_dir(b, c.disk.write);
+    put_u32(b, c.disk.per_disk.len() as u32);
+    for (disk, r, w) in &c.disk.per_disk {
+        put_u32(b, *disk);
+        put_dir(b, *r);
+        put_dir(b, *w);
+    }
+    put_u64(b, c.disk.avg_raw);
+    put_u64(b, c.disk.p50_raw);
+    put_u64(b, c.disk.p99_raw);
+    put_u64(b, c.disk.max_raw);
+}
+
+fn put_dir(b: &mut Vec<u8>, d: DirStat) {
+    put_u64(b, d.bytes);
+    put_u64(b, d.ops);
 }
 
 /// Deserializza una `Capture`. Errore (mai panic) su magic errato, versione non
@@ -230,9 +288,9 @@ pub fn read_capture(data: &[u8]) -> Result<Capture, ArgusError> {
         ));
     }
     let version = r.u16().ok_or_else(corrupt)?;
-    if version != FORMAT_VERSION {
+    if version != 1 && version != FORMAT_VERSION {
         return Err(ArgusError::Internal(format!(
-            "Versione del formato .argus non supportata: {version} (attesa {FORMAT_VERSION})."
+            "Versione del formato .argus non supportata: {version} (attese 1 o {FORMAT_VERSION})."
         )));
     }
     let _compression = r.u8().ok_or_else(corrupt)?; // 0 = nessuna (per ora)
@@ -254,6 +312,13 @@ pub fn read_capture(data: &[u8]) -> Result<Capture, ArgusError> {
 
     let flame = read_flame(&mut r).ok_or_else(corrupt)?;
 
+    // v2: metriche ETW profonde in coda. Su v1 (o coda assente) → default.
+    let (wait, mem, disk) = if version >= 2 {
+        read_extras(&mut r).ok_or_else(corrupt)?
+    } else {
+        Default::default()
+    };
+
     Ok(Capture {
         argus_version,
         process_name,
@@ -269,6 +334,55 @@ pub fn read_capture(data: &[u8]) -> Result<Capture, ArgusError> {
         total_io_read_mb,
         total_io_write_mb,
         flame,
+        wait,
+        mem,
+        disk,
+    })
+}
+
+/// Legge le metriche ETW profonde (v2). `None` se il buffer è troncato.
+fn read_extras(r: &mut ByteReader) -> Option<(WaitBreakdown, MemStats, DiskSnapshot)> {
+    let wait = WaitBreakdown {
+        lock: r.u64()?,
+        io: r.u64()?,
+        user_idle: r.u64()?,
+        preempted: r.u64()?,
+        other: r.u64()?,
+    };
+    let mem = MemStats {
+        hard_faults: r.u64()?,
+        hard_fault_bytes: r.u64()?,
+        valloc_count: r.u64()?,
+        valloc_bytes: r.u64()?,
+        vfree_count: r.u64()?,
+        vfree_bytes: r.u64()?,
+    };
+    let read = get_dir(r)?;
+    let write = get_dir(r)?;
+    let n = r.u32()? as usize;
+    let mut per_disk = Vec::with_capacity(n.min(r.remaining() / 20 + 1));
+    for _ in 0..n {
+        let disk = r.u32()?;
+        let dr = get_dir(r)?;
+        let dw = get_dir(r)?;
+        per_disk.push((disk, dr, dw));
+    }
+    let disk = DiskSnapshot {
+        read,
+        write,
+        per_disk,
+        avg_raw: r.u64()?,
+        p50_raw: r.u64()?,
+        p99_raw: r.u64()?,
+        max_raw: r.u64()?,
+    };
+    Some((wait, mem, disk))
+}
+
+fn get_dir(r: &mut ByteReader) -> Option<DirStat> {
+    Some(DirStat {
+        bytes: r.u64()?,
+        ops: r.u64()?,
     })
 }
 
@@ -356,6 +470,46 @@ mod tests {
             total_io_read_mb: 12.5,
             total_io_write_mb: 3.25,
             flame,
+            wait: WaitBreakdown {
+                lock: 100,
+                io: 50,
+                user_idle: 30,
+                preempted: 5,
+                other: 2,
+            },
+            mem: MemStats {
+                hard_faults: 3,
+                hard_fault_bytes: 12288,
+                valloc_count: 4,
+                valloc_bytes: 64 * 1024 * 1024,
+                vfree_count: 2,
+                vfree_bytes: 16 * 1024 * 1024,
+            },
+            disk: DiskSnapshot {
+                read: DirStat {
+                    bytes: 1024 * 1024,
+                    ops: 10,
+                },
+                write: DirStat {
+                    bytes: 2 * 1024 * 1024,
+                    ops: 5,
+                },
+                per_disk: vec![(
+                    0,
+                    DirStat {
+                        bytes: 1024 * 1024,
+                        ops: 10,
+                    },
+                    DirStat {
+                        bytes: 2 * 1024 * 1024,
+                        ops: 5,
+                    },
+                )],
+                avg_raw: 3000,
+                p50_raw: 768,
+                p99_raw: 786_432,
+                max_raw: 100_000,
+            },
         }
     }
 
@@ -396,6 +550,47 @@ mod tests {
         let inner = walk(&back.flame, &["main", "compute", "inner"]).unwrap();
         assert_eq!(back.flame.total_of(inner), 2);
         assert_eq!(back.flame.own_of(inner), 2);
+
+        // Metriche ETW profonde (v2): round-trip esatto.
+        assert_eq!(back.wait, cap.wait);
+        assert_eq!(back.mem, cap.mem);
+        assert_eq!(back.disk, cap.disk);
+        assert_eq!(back.disk.p99_raw, 786_432);
+        assert_eq!(back.mem.valloc_bytes, 64 * 1024 * 1024);
+        assert_eq!(back.disk.per_disk.len(), 1);
+    }
+
+    #[test]
+    fn reads_v1_without_extras() {
+        // Un file v1 (senza la coda v2) deve leggersi con extras a default, non
+        // fallire: backward-compatibility del formato. Costruiamo un v1 puro.
+        let v1 = {
+            let c = sample_capture();
+            let mut b = Vec::new();
+            b.extend_from_slice(MAGIC);
+            put_u16(&mut b, 1);
+            put_u8(&mut b, COMPRESSION_NONE);
+            put_str(&mut b, &c.argus_version);
+            put_str(&mut b, &c.process_name);
+            put_u32(&mut b, c.pid);
+            put_u32(&mut b, c.num_cpus);
+            put_f32_slice(&mut b, &c.cpu_hist);
+            put_f32_slice(&mut b, &c.ws_hist);
+            put_f32_slice(&mut b, &c.priv_hist);
+            put_f32_slice(&mut b, &c.io_r_hist);
+            put_f32_slice(&mut b, &c.io_w_hist);
+            put_f32_slice(&mut b, &c.thread_hist);
+            put_f32_slice(&mut b, &c.handle_hist);
+            put_f32(&mut b, c.total_io_read_mb);
+            put_f32(&mut b, c.total_io_write_mb);
+            write_flame(&mut b, &c.flame);
+            b
+        };
+        let back = read_capture(&v1).expect("v1 deve leggersi");
+        assert_eq!(back.pid, 1234);
+        assert_eq!(back.wait, WaitBreakdown::default());
+        assert_eq!(back.mem, MemStats::default());
+        assert!(back.disk.is_empty());
     }
 
     #[test]
@@ -425,7 +620,14 @@ mod tests {
         snap.ws_hist = VecDeque::from(vec![50.0]);
         snap.total_io_read_mb = 7.0;
 
-        let cap = Capture::from_live(&snap, &flame, "0.1.0");
+        let cap = Capture::from_live(
+            &snap,
+            &flame,
+            "0.1.0",
+            WaitBreakdown::default(),
+            MemStats::default(),
+            DiskSnapshot::default(),
+        );
         assert_eq!(cap.pid, 99);
         assert_eq!(cap.process_name, "test.exe");
         assert_eq!(cap.cpu_hist, vec![10.0, 20.0, 30.0]);

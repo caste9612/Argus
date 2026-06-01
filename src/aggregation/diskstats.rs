@@ -63,6 +63,26 @@ pub struct DirStat {
     pub ops: u64,
 }
 
+/// Proiezione *serializzabile* di `DiskStats` per persistenza/export (sola
+/// lettura): i conteggi e i percentili calcolati, senza l'istogramma interno.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiskSnapshot {
+    pub read: DirStat,
+    pub write: DirStat,
+    /// `(disco, letture, scritture)`, ordinati per byte totali decrescenti.
+    pub per_disk: Vec<(u32, DirStat, DirStat)>,
+    pub avg_raw: u64,
+    pub p50_raw: u64,
+    pub p99_raw: u64,
+    pub max_raw: u64,
+}
+
+impl DiskSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.read.ops == 0 && self.write.ops == 0
+    }
+}
+
 impl DirStat {
     fn add(&mut self, bytes: u64) {
         self.bytes += bytes;
@@ -144,6 +164,19 @@ impl DiskStats {
     /// Tempo di risposta al 99° percentile (coda) in tick grezzi.
     pub fn p99_response_raw(&self) -> u64 {
         self.lat.percentile(0.99)
+    }
+
+    /// Proiezione serializzabile per persistenza/export.
+    pub fn snapshot(&self) -> DiskSnapshot {
+        DiskSnapshot {
+            read: self.read,
+            write: self.write,
+            per_disk: self.disks_by_bytes(),
+            avg_raw: self.avg_response_raw(),
+            p50_raw: self.p50_response_raw(),
+            p99_raw: self.p99_response_raw(),
+            max_raw: self.max_response_raw(),
+        }
     }
 
     /// Dischi ordinati per byte totali decrescenti: `(disco, letture, scritture)`.

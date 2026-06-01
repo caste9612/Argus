@@ -151,6 +151,9 @@ mod tests {
             total_io_read_mb: 0.0,
             total_io_write_mb: 0.0,
             flame,
+            wait: Default::default(),
+            mem: Default::default(),
+            disk: Default::default(),
         }
     }
 
