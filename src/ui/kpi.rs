@@ -121,12 +121,14 @@ pub fn metric_card(
 }
 
 /// Card semplice (label + valore), senza sparkline. Usata nelle sezioni
-/// disco/memoria, dove non c'è una storia time-series.
+/// disco/memoria dentro `ui.columns(...)`: riempie la colonna assegnata, così
+/// le card della sezione restano uniformi e allineate (niente larghezze ragged).
 pub fn card(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32, hint: &str) {
     egui::Frame::group(ui.style())
         .fill(ui.style().visuals.extreme_bg_color)
         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.vertical(|ui| {
                 ui.label(RichText::new(label).small().weak());
                 ui.label(RichText::new(value).monospace().size(20.0).color(color));

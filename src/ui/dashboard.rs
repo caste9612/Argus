@@ -175,9 +175,10 @@ fn mem_section(ui: &mut egui::Ui, mem: &Mutex<MemStats>) {
             ui.weak("· del target durante la cattura");
         });
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
+        let net = m.net_alloc_bytes();
+        ui.columns(3, |cols| {
             kpi::card(
-                ui,
+                &mut cols[0],
                 "Hard page fault",
                 &format!("{}", m.hard_faults),
                 PINK,
@@ -188,7 +189,7 @@ fn mem_section(ui: &mut egui::Ui, mem: &Mutex<MemStats>) {
                 ),
             );
             kpi::card(
-                ui,
+                &mut cols[1],
                 "VirtualAlloc",
                 &format!("{:.1} MB", mb(m.valloc_bytes)),
                 PURPLE,
@@ -198,9 +199,8 @@ fn mem_section(ui: &mut egui::Ui, mem: &Mutex<MemStats>) {
                     m.valloc_count
                 ),
             );
-            let net = m.net_alloc_bytes();
             kpi::card(
-                ui,
+                &mut cols[2],
                 "Saldo netto",
                 &format!("{:+.1} MB", net as f64 / (1024.0 * 1024.0)),
                 if net > 0 { AMBER } else { TEAL },
@@ -224,9 +224,9 @@ fn disk_section(ui: &mut egui::Ui, disk: &Mutex<DiskStats>) {
             ui.weak("· attività di sistema durante la cattura, non solo del target");
         });
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
+        ui.columns(2, |cols| {
             kpi::card(
-                ui,
+                &mut cols[0],
                 "Disco lettura",
                 &format!("{:.1} MB", mb(d.read.bytes)),
                 TEAL,
@@ -237,7 +237,7 @@ fn disk_section(ui: &mut egui::Ui, disk: &Mutex<DiskStats>) {
                 ),
             );
             kpi::card(
-                ui,
+                &mut cols[1],
                 "Disco scrittura",
                 &format!("{:.1} MB", mb(d.write.bytes)),
                 AMBER,
