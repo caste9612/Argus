@@ -133,6 +133,9 @@ fn push_capped(v: &mut VecDeque<f32>, x: f32) {
 
 #[cfg(test)]
 mod tests {
+    // Il codice di test può usare unwrap/expect/panic liberamente: la no-panic
+    // policy vale per la produzione (docs/06-reliability.md).
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     #[test]

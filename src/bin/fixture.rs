@@ -4,6 +4,10 @@
 //! Alloca e "tocca" la memoria (così entra nel working set), poi brucia CPU su
 //! N thread per `hold_ms`. Comportamento prevedibile che i test possono misurare.
 
+// Binario di test-support: unwrap/expect/panic ammessi (no-panic vale per la
+// produzione, docs/06-reliability.md).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::time::{Duration, Instant};
 
 fn main() {

@@ -31,6 +31,14 @@ features = [
     "Win32_Security",
 ]
 
+[lints.clippy]
+# No-panic policy (docs/06-reliability.md): vietato unwrap/expect/panic nel
+# codice di produzione. Warn qui + `-D warnings` nel gate CI = errore di build.
+# Il codice di test/fixture è esentato con #![allow(...)] mirati e commentati.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

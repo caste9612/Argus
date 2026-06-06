@@ -25,6 +25,10 @@ impl ArgusApp {
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<Command>();
 
         let shared_for_thread = shared.clone();
+        // Setup pre-main-loop: senza il thread sampler l'app non ha nulla da
+        // mostrare, quindi un fail immediato e rumoroso è corretto qui. È
+        // l'eccezione alla no-panic policy prevista da CLAUDE.md (setup iniziale).
+        #[allow(clippy::expect_used)]
         let join = std::thread::Builder::new()
             .name("argus-sampler".into())
             .spawn(move || sampler::run(shared_for_thread, cmd_rx))
