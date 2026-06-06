@@ -14,7 +14,10 @@ use argus::capture::etw::KernelTraceSession;
 use std::time::Duration;
 
 fn main() {
-    let pid: u32 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let pid: u32 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
 
     // Logging su stderr utile durante lo spike (la sessione logga via tracing).
     tracing_subscriber::fmt()

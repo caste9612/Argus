@@ -8,7 +8,9 @@
 use crate::util::error::ArgusError;
 use core::ffi::c_void;
 use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
-use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, HANDLE, STATUS_INFO_LENGTH_MISMATCH};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_ACCESS_DENIED, HANDLE, STATUS_INFO_LENGTH_MISMATCH,
+};
 use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::WindowsProgramming::SYSTEM_PROCESS_INFORMATION;
@@ -65,7 +67,9 @@ pub fn open_process(pid: u32) -> Result<ProcessHandle, ArgusError> {
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
     match handle {
         Ok(h) if !h.is_invalid() => Ok(ProcessHandle(h)),
-        Ok(_) => Err(ArgusError::Internal("OpenProcess ha dato un handle nullo".into())),
+        Ok(_) => Err(ArgusError::Internal(
+            "OpenProcess ha dato un handle nullo".into(),
+        )),
         Err(e) if e.code().0 as u32 == ERROR_ACCESS_DENIED.to_hresult().0 as u32 => {
             Err(ArgusError::Permission {
                 hint: format!(

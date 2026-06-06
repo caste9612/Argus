@@ -54,7 +54,11 @@ fn init_logging() -> Option<WorkerGuard> {
         if std::fs::create_dir_all(&dir).is_ok() {
             let appender = tracing_appender::rolling::daily(&dir, "argus.log");
             let (nb, guard) = tracing_appender::non_blocking(appender);
-            fmt().with_writer(nb).with_ansi(false).with_env_filter(filter()).init();
+            fmt()
+                .with_writer(nb)
+                .with_ansi(false)
+                .with_env_filter(filter())
+                .init();
             return Some(guard);
         }
     }

@@ -25,12 +25,13 @@ use core::ffi::c_void;
 use std::mem::size_of;
 use tracing::info;
 use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SUCCESS, WIN32_ERROR};
-use windows::Win32::System::Diagnostics::Etw::{
-    ControlTraceW, StartTraceW, TraceSetInformation, TraceSampledProfileIntervalInfo,
-    CONTROLTRACE_HANDLE, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_PROFILE, EVENT_TRACE_PROPERTIES,
-    EVENT_TRACE_REAL_TIME_MODE, KERNEL_LOGGER_NAMEW, TRACE_PROFILE_INTERVAL, WNODE_FLAG_TRACED_GUID,
-};
 use windows::Win32::System::Diagnostics::Etw::SystemTraceControlGuid;
+use windows::Win32::System::Diagnostics::Etw::{
+    ControlTraceW, StartTraceW, TraceSampledProfileIntervalInfo, TraceSetInformation,
+    CONTROLTRACE_HANDLE, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_PROFILE,
+    EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, KERNEL_LOGGER_NAMEW,
+    TRACE_PROFILE_INTERVAL, WNODE_FLAG_TRACED_GUID,
+};
 
 /// Uno stack sample catturato: PID/TID + indirizzi di ritorno grezzi. La
 /// risoluzione in simboli avviene a valle (Fase 2, `capture/symbols.rs`).
@@ -119,7 +120,12 @@ impl KernelTraceSession {
         // lo stesso buffer props (ControlTrace lo riempie con le statistiche).
         unsafe {
             let p = self.props.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
-            let _ = ControlTraceW(self.handle, KERNEL_LOGGER_NAMEW, p, EVENT_TRACE_CONTROL_STOP);
+            let _ = ControlTraceW(
+                self.handle,
+                KERNEL_LOGGER_NAMEW,
+                p,
+                EVENT_TRACE_CONTROL_STOP,
+            );
         }
     }
 
