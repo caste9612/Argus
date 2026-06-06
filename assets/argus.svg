@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C1C28"/>
+      <stop offset="1" stop-color="#0A0A0F"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="0.42" cy="0.40" r="0.64">
+      <stop offset="0" stop-color="#CFC3FF"/>
+      <stop offset="0.42" stop-color="#7B61FF"/>
+      <stop offset="1" stop-color="#3F23C0"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7B61FF" stop-opacity="0.50"/>
+      <stop offset="1" stop-color="#7B61FF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="eye">
+      <path d="M44 128 Q128 52 212 128 Q128 204 44 128 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- tile -->
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="53.5" fill="none" stroke="#2C2C3C" stroke-width="1"/>
+
+  <!-- soft glow behind the eye -->
+  <circle cx="128" cy="128" r="82" fill="url(#glow)"/>
+
+  <!-- aperture ring + reticle ticks (the "profiler/measure" cue) -->
+  <circle cx="128" cy="128" r="96" fill="none" stroke="#39354E" stroke-width="3"/>
+  <g stroke="#7B61FF" stroke-width="4" stroke-linecap="round" opacity="0.9">
+    <line x1="128" y1="26" x2="128" y2="40"/>
+    <line x1="128" y1="216" x2="128" y2="230"/>
+    <line x1="24" y1="128" x2="38" y2="128"/>
+    <line x1="218" y1="128" x2="232" y2="128"/>
+  </g>
+
+  <!-- eye: dark fill, violet iris clipped to the lid, then the lid outline -->
+  <path d="M44 128 Q128 52 212 128 Q128 204 44 128 Z" fill="#0B0B11"/>
+  <g clip-path="url(#eye)">
+    <circle cx="128" cy="128" r="47" fill="url(#iris)"/>
+    <circle cx="128" cy="128" r="20" fill="#08080C"/>
+    <circle cx="146" cy="113" r="8.5" fill="#F2EFFF" fill-opacity="0.95"/>
+    <circle cx="116" cy="142" r="4" fill="#F2EFFF" fill-opacity="0.45"/>
+  </g>
+  <path d="M44 128 Q128 52 212 128 Q128 204 44 128 Z" fill="none" stroke="#BCA9FF" stroke-width="7" stroke-linejoin="round"/>
+</svg>
