@@ -106,11 +106,14 @@ pub fn metric_card(
         .fill(ui.style().visuals.extreme_bg_color)
         .inner_margin(egui::Margin::symmetric(10.0, 7.0))
         .show(ui, |ui| {
-            ui.set_width(148.0);
+            // Riempie la colonna assegnata (la griglia in dashboard.rs decide
+            // quante colonne): così la card è responsive come hero e grafici.
+            let w = ui.available_width();
+            ui.set_width(w);
             ui.vertical(|ui| {
                 ui.label(RichText::new(label).small().weak());
                 ui.label(RichText::new(value).monospace().size(20.0).color(color));
-                sparkline(ui, hist, color, egui::vec2(148.0, 26.0));
+                sparkline(ui, hist, color, egui::vec2(w, 26.0));
             });
         })
         .response

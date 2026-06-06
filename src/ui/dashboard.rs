@@ -58,56 +58,7 @@ fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>, mem: &
                 &snap.cpu_hist,
             );
             ui.add_space(10.0);
-            ui.horizontal_wrapped(|ui| {
-                kpi::metric_card(
-                    ui,
-                    "RAM (working set)",
-                    &format!("{:.1} MB", snap.working_set_mb),
-                    BLUE,
-                    "Memoria fisicamente residente in RAM. Oscillazioni = paging.",
-                    &snap.ws_hist,
-                );
-                kpi::metric_card(
-                    ui,
-                    "RAM (private)",
-                    &format!("{:.1} MB", snap.private_mb),
-                    PURPLE,
-                    "Memoria committed non condivisa. Crescita monotona = possibile leak.",
-                    &snap.priv_hist,
-                );
-                kpi::metric_card(
-                    ui,
-                    "Thread",
-                    &format!("{}", snap.threads),
-                    AMBER,
-                    "Numero di thread (campionato 1×/s).",
-                    &snap.thread_hist,
-                );
-                kpi::metric_card(
-                    ui,
-                    "Handle",
-                    &format!("{}", snap.handles),
-                    PINK,
-                    "Handle kernel aperti. Crescita monotona = handle leak.",
-                    &snap.handle_hist,
-                );
-                kpi::metric_card(
-                    ui,
-                    "I/O lettura",
-                    &format!("{:.2} MB/s", snap.io_read_mb_s),
-                    TEAL,
-                    "Throughput di lettura (disco + pipe + console).",
-                    &snap.io_r_hist,
-                );
-                kpi::metric_card(
-                    ui,
-                    "I/O scrittura",
-                    &format!("{:.2} MB/s", snap.io_write_mb_s),
-                    AMBER,
-                    "Throughput di scrittura.",
-                    &snap.io_w_hist,
-                );
-            });
+            metric_grid(ui, snap);
 
             ui.add_space(12.0);
 
@@ -143,6 +94,72 @@ fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>, mem: &
             ui.add_space(8.0);
             mem_section(ui, mem);
         });
+}
+
+/// Griglia responsive di card metriche: il numero di colonne si adatta alla
+/// larghezza (in righe bilanciate 6/3/2/1) e ogni card riempie la sua colonna,
+/// così la riga si comporta come hero e grafici — niente spazio morto.
+fn metric_grid(ui: &mut egui::Ui, snap: &Snapshot) {
+    let cards = [
+        (
+            "RAM (working set)",
+            format!("{:.1} MB", snap.working_set_mb),
+            BLUE,
+            "Memoria fisicamente residente in RAM. Oscillazioni = paging.",
+            &snap.ws_hist,
+        ),
+        (
+            "RAM (private)",
+            format!("{:.1} MB", snap.private_mb),
+            PURPLE,
+            "Memoria committed non condivisa. Crescita monotona = possibile leak.",
+            &snap.priv_hist,
+        ),
+        (
+            "Thread",
+            format!("{}", snap.threads),
+            AMBER,
+            "Numero di thread (campionato 1×/s).",
+            &snap.thread_hist,
+        ),
+        (
+            "Handle",
+            format!("{}", snap.handles),
+            PINK,
+            "Handle kernel aperti. Crescita monotona = handle leak.",
+            &snap.handle_hist,
+        ),
+        (
+            "I/O lettura",
+            format!("{:.2} MB/s", snap.io_read_mb_s),
+            TEAL,
+            "Throughput di lettura (disco + pipe + console).",
+            &snap.io_r_hist,
+        ),
+        (
+            "I/O scrittura",
+            format!("{:.2} MB/s", snap.io_write_mb_s),
+            AMBER,
+            "Throughput di scrittura.",
+            &snap.io_w_hist,
+        ),
+    ];
+    let spacing = ui.spacing().item_spacing.x;
+    let avail = ui.available_width();
+    // Quante card ci stanno (target ~150px), poi arrotonda a un divisore di 6
+    // per avere righe bilanciate (6, oppure 3+3, 2+2+2, …).
+    let natural = (((avail + spacing) / (150.0 + spacing)).floor() as usize).max(1);
+    let per_row = [6usize, 3, 2, 1]
+        .into_iter()
+        .find(|&d| d <= natural)
+        .unwrap_or(1);
+    for chunk in cards.chunks(per_row) {
+        ui.columns(per_row, |cols| {
+            for (i, c) in chunk.iter().enumerate() {
+                kpi::metric_card(&mut cols[i], c.0, &c.1, c.2, c.3, c.4);
+            }
+        });
+    }
 }
 
 /// Dettaglio memoria dagli eventi PageFault/VirtualAlloc ETW (filtrati sul
