@@ -14,7 +14,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1400.0, 900.0])
             .with_min_inner_size([900.0, 600.0])
-            .with_title("Argus"),
+            .with_title("Argus")
+            .with_icon(load_icon()),
         renderer: eframe::Renderer::Wgpu,
         vsync: true,
         // wgpu in auto (backend PRIMARY: Vulkan/DX12/…): sceglie il primo
@@ -52,6 +53,16 @@ fn main() -> eframe::Result {
             Ok(Box::new(ArgusApp::new(initial_pid, initial_tab)))
         }),
     )
+}
+
+/// Icona della finestra (barra del titolo / taskbar). RGBA grezzo 256×256
+/// generato da `assets/argus.svg` — nessun decoder PNG né dipendenza a runtime.
+fn load_icon() -> egui::IconData {
+    egui::IconData {
+        rgba: include_bytes!("../assets/argus-256.rgba").to_vec(),
+        width: 256,
+        height: 256,
+    }
 }
 
 /// Inizializza il logging su file in `%LOCALAPPDATA%\Argus\`. Se non possibile
