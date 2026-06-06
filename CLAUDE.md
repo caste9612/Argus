@@ -21,6 +21,7 @@ Quando il task tocca una di queste aree, **leggi il doc rilevante PRIMA** di pro
 | UI / componenti grafici | `docs/05-ui-design.md` |
 | Error handling, edge cases | `docs/06-reliability.md` |
 | Quale fase è in corso | `docs/07-roadmap.md` |
+| ETW / cattura kernel (Fase 2) | `docs/10-etw-spike.md` |
 | Setup, build, test | `docs/08-development.md` |
 
 Se i docs sono ambigui o incompleti per il task, **chiedi** invece di indovinare. Aggiorna il doc rilevante prima di scrivere codice.

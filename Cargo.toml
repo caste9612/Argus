@@ -47,3 +47,14 @@ strip = true
 
 [profile.dev]
 opt-level = 1
+
+[features]
+# Spike ETW (Fase 2): opt-in per non appesantire la build di default finché la
+# cattura kernel non è validata. Abilita le sole API ETW del crate windows.
+# Vedi docs/09-decisions.md D14 e docs/10-etw-spike.md.
+etw = ["windows/Win32_System_Diagnostics_Etw"]
+
+# Strumento di spike: si compila solo con `--features etw`.
+[[bin]]
+name = "etw_spike"
+required-features = ["etw"]
