@@ -1,8 +1,14 @@
 //! Layer 3 — Aggregation.
 //!
-//! In Fase 1 il polling produce già valori scalari, quindi qui vive solo lo
-//! stato time-series (`Snapshot`) e gli helper sulle storie. L'aggregatore come
-//! thread separato arriverà in Fase 2 con gli eventi ETW ad alta frequenza.
+//! In Fase 1 il polling produce già valori scalari, quindi qui vive lo stato
+//! time-series (`Snapshot`) e gli helper sulle storie. In Fase 2 si aggiunge il
+//! flame graph (`flame`), che aggrega gli stack sample ETW in un albero pesato.
+//! L'aggregatore come thread separato arriverà con gli eventi ad alta frequenza.
+
+pub mod diskstats;
+pub mod flame;
+pub mod memstats;
+pub mod timeline;
 
 use std::collections::VecDeque;
 
@@ -27,8 +33,21 @@ pub enum Status {
     Running,
     /// Il processo target è terminato durante la sessione.
     Exited,
+    /// Sessione caricata da file `.argus` (replay statico); etichetta per la UI.
+    Replay(String),
     /// Un'operazione è fallita; messaggio pronto per l'utente.
     Error(String),
+}
+
+/// Stato della cattura ETW per il flame graph (Fase 2).
+#[derive(Clone, PartialEq)]
+pub enum FlameStatus {
+    /// Profiling non attivo (non collegati, o sessione ETW non avviata).
+    Off,
+    /// ETW non disponibile: motivo pronto per l'utente (es. mancano privilegi).
+    Unavailable(String),
+    /// Cattura in corso.
+    Active,
 }
 
 /// Vista immutabile pubblicata dal sampler verso la UI a ~10 Hz.
@@ -42,6 +61,10 @@ pub struct Snapshot {
     pub has_debug_privilege: bool,
     pub attached: Option<ProcessMeta>,
     pub status: Status,
+    /// Stato della cattura ETW per il flame graph.
+    pub flame_status: FlameStatus,
+    /// Messaggio transitorio per la UI (es. "Salvato in …" o errore di caricamento).
+    pub notice: Option<String>,
 
     // Valori correnti (per le KPI card).
     pub cpu: f32,
@@ -71,6 +94,8 @@ impl Snapshot {
             has_debug_privilege,
             attached: None,
             status: Status::NotAttached,
+            flame_status: FlameStatus::Off,
+            notice: None,
             cpu: 0.0,
             working_set_mb: 0.0,
             private_mb: 0.0,
@@ -133,9 +158,6 @@ fn push_capped(v: &mut VecDeque<f32>, x: f32) {
 
 #[cfg(test)]
 mod tests {
-    // Il codice di test può usare unwrap/expect/panic liberamente: la no-panic
-    // policy vale per la produzione (docs/06-reliability.md).
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     #[test]

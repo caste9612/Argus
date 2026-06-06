@@ -10,12 +10,35 @@ ne mostra in tempo reale CPU, RAM (working set + private), I/O, thread e handle,
 con dashboard GPU e lista processi raggruppata/ordinabile. Build, clippy e test
 (2 unit + 3 integration) verdi.
 
-**Tag `v0.1.0`** sul completamento Fase 1. Igiene pre-Fase-2 completata: lint
-no-panic cablati nel gate, binario release misurato (10.78 MB), decisioni aperte
-chiuse (RAM, ring buffer, nome) e nuove D13/D14 registrate.
+**Fase 2 — ETW + flame graph: implementata, cattura live da verificare come
+admin.** Fatto e testato (17 unit + 3 integration, clippy/fmt puliti): flame
+graph puro (`aggregation/flame.rs`, D13), symbol resolution DbgHelp con cache
+(`capture/symbols.rs`, D14), parser eventi + sessione ETW kernel
+(`capture/etw.rs`, D15), aggregatore ETW→simboli→flame (`capture/profiling.rs`,
+D16), tab "Flame graph" interattiva col Painter di egui (`ui/flame.rs`, D17).
+L'app gira e mostra il degrado graceful "ETW non disponibile" senza admin
+(verificato a video). **Cattura ETW live verificata come amministratore** (D20,
+`tests/etw_live.rs`): 7690 stack reali dal fixture, ordine leaf-first. Restano i
+nomi funzione del target (on-disk, D14), la misura overhead e la resa flame a
+video — vedi handoff in [`07-roadmap.md`](07-roadmap.md).
 
-**Prossimo**: Fase 2 — ETW + flame graph (il pezzo che mostra *dove* il codice
-spende tempo). Vedi [`07-roadmap.md`](07-roadmap.md).
+**Fase 4 — recording/diff/export: completata.** Formato `.argus` (D18),
+record/replay (D19), diff tra capture (`diff.rs`, tab Diff), export
+CSV/folded/SVG (`export.rs`). Tutto testato (round-trip, export, diff).
+
+**Fase 3 — timeline + lock + memoria: live e verificata.** Timeline stati-thread
+(Running/Ready/Waiting) dai `CSwitch`, filtrata sui TID del target; **lock
+contention** dalla causa d'attesa `KWAIT_REASON` (D21). **Disk I/O detail** (D22)
+e **memoria** (hard fault + VirtualAlloc, D25) sullo stesso kernel logger, validati
+live. Il tracking heap a livello `HeapAlloc` resta **fuori scope** per il vincolo
+no-injection (D25).
+
+**Overhead** misurato (D23): ~2.0–2.2% su loop CPU-bound stretto. **Infra**: export
+JSON, CI, cargo-deny, tema (D24). **Latenza disco p50/p99** + **formato `.argus` v2**
+(persiste disco/memoria/lock, retro-compatibile v1) + JSON completo (D26).
+
+**Test totali**: 56 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
+puliti; release ~10.6 MB.
 
 ## Decisioni
 
@@ -92,38 +115,215 @@ Così i test d'integrazione in `tests/` usano `argus::...` e un binario
 thread) fa da bersaglio reale. **Conseguenza**: validazione end-to-end del path
 Win32 senza mock.
 
-### D13 — Ring buffer sampler→aggregator: `crossbeam-channel::bounded`
-La pipeline ETW ad alta frequenza di Fase 2 userà un canale **bounded** di
-`crossbeam-channel` (già dipendenza) come SPSC sampler→aggregator. Niente `rtrb`
-o altre crate finché un profiling non mostri che l'overhead del canale pesa nella
-hot path. **Conseguenza**: nessuna nuova dipendenza; un buffer pieno è di per sé
-il segnale che l'aggregator è in ritardo (back-pressure naturale).
+### D13 — Flame graph: albero puro keyed-by-nome, layout senza ricorsione
+La struttura dati del flame graph (`aggregation/flame.rs`) è **pura**: aggrega
+stack di *nomi di frame già risolti*, senza toccare Win32. Questo la disaccoppia
+dal layer simboli (che mappa indirizzo→nome) e la rende interamente testabile
+senza ETW né privilegi. Scelte:
+- **Ordine stack root→leaf** (frame più esterno per primo): è l'ordine naturale
+  del disegno; il layer ETW invertirà se serve.
+- **Interning dei nomi** (`name_id: u32`) + una sola mappa `(genitore, name) →
+  figlio` per tutto l'albero, invece di una HashMap per nodo: meno allocazioni.
+- **Figli in ordine di prima comparsa**: stabile tra un update e l'altro, così i
+  frame non saltano lateralmente mentre i contatori crescono live. Ordinamento
+  per valore/alfabetico è un affinamento UI futuro.
+- **Layout con work-stack esplicito** (niente ricorsione): robusto anche per
+  stack patologicamente profondi (no-panic policy). Il focus si espande a piena
+  larghezza con la catena di antenati per il drill-down/zoom.
+**Conseguenza**: il rendering (egui o wgpu) consuma solo `layout(focus) →
+Vec<Rect>` + accessor di lettura; nessuna logica di profiling nella UI.
 
-### D14 — Lo spike ETW parte da `windows-rs` raw, non da `ferrisetw`
-Lo stack (`03`) prevede `ferrisetw` + fallback raw. Per lo **spike** di apertura
-Fase 2 partiamo invece da `windows-rs` raw (già dipendenza): valida il path più
-difficile (provider kernel `PerfInfo` + stack walk) con pieno controllo e **zero
-nuove dipendenze**, e mappa esattamente dove i binding mancano. La scelta di
-produzione `ferrisetw`-vs-raw si prende **dopo** lo spike, informata da ciò che
-impariamo. **Conseguenza**: non aggiungiamo `ferrisetw` finché non è provato
-necessario (regola "no dipendenze comode").
+### D14 — Symbol resolution: DbgHelp RAII, cache a 2 generazioni, fallback
+`capture/symbols.rs` avvolge DbgHelp (`SymInitializeW`/`SymFromAddrW`/
+`SymGetModuleInfoW64`/`SymCleanup`) in un tipo RAII. DbgHelp **non è
+thread-safe**: il resolver è posseduto da un solo thread (l'aggregatore).
+Scelte:
+- **Mai panic, mai nome inventato**: se la risoluzione fallisce si ripiega su
+  `modulo!0xADDR` o `0xADDR` (graceful degradation, docs/06-reliability.md).
+- **Cache a due generazioni** (hot/cold) invece di un LRU con liste intrusive:
+  memoria limitata a ~2×cap, O(1), gli indirizzi caldi sopravvivono alla
+  rotazione. Niente dipendenza `lru`.
+- **Risoluzione del target**: la strategia definitiva sarà *on-disk* — caricare
+  i moduli (`SymLoadModuleExW`) dai path/base degli eventi ETW Image/Load,
+  invece di leggere la memoria del target vivo. Più robusto (funziona anche dopo
+  l'uscita del processo) e non richiede `PROCESS_VM_READ`, mantenendo l'attach
+  minimale di D10. Il resolver è comunque già in grado di operare su un handle
+  vivo (`invade = true`), come fanno i test che risolvono sé stessi.
+**Conseguenza**: l'attach di Fase 1 resta invariato; la decisione su come/quando
+aprire i moduli del target si concretizza con la sessione ETW.
+
+### D15 — Sessione ETW: NT Kernel Logger, real-time, consumer thread, drop-on-full
+La cattura degli stack sample (`capture/etw.rs`, `EtwProfiler`) usa la sessione
+kernel classica "NT Kernel Logger": `StartTraceW` con `EVENT_TRACE_FLAG_PROFILE`
++ `TraceSetInformation(TraceStackTracingInfo)` per lo stack-walk dell'evento
+`SampleProfile`, consumata in real-time da un thread dedicato (`ProcessTrace`).
+Scelte:
+- **Degrado graceful**: senza admin `StartTraceW` dà `ACCESS_DENIED` →
+  `start()` ritorna `Err(Permission)` con suggerimento; Argus prosegue in
+  polling-only (no panic, no retry-loop). Coperto da test (no-admin).
+- **`try_send` nel callback**: il callback ETW gira sul consumer del kernel e
+  **non deve mai bloccare**; in overflow del canale (bounded) lo stack si scarta.
+- **Stop pulito**: `CloseTrace` sblocca `ProcessTrace`, poi `ControlTraceW(STOP)`
+  e join del thread (RAII su Drop).
+- **Parsing isolato e testato**: il decode binario (`parse_stack_walk`) è puro e
+  coperto da unit test con buffer sintetici (la parte più bug-prone).
+- **Verifica**: la cattura *live* richiede admin e **non è verificabile nei test
+  non elevati** — va collaudata a mano come amministratore (vedi `07-roadmap.md`
+  DoD Fase 2). Il codice compila, l'`unsafe` è isolato/commentato e il path di
+  fallback è testato.
+
+### D16 — Flame graph condiviso via `Mutex`, non arc-swap (deviazione mirata da D4)
+La pipeline ad alta frequenza (polling → Snapshot) resta lock-free via `arc-swap`
+(D4 invariato). Il **flame graph**, invece, è condiviso UI↔aggregatore con un
+`Arc<Mutex<FlameGraph>>`. Motivo: è un albero **mutato di continuo** (un
+`add_stack` per sample); pubblicarne un clone immutabile via `arc-swap` ad ogni
+update costerebbe O(nodi) con molte allocazioni, mentre il dato è a frequenza
+più bassa (limitato dalla risoluzione simboli) e letto dalla UI a ~30 fps. Le
+sezioni critiche sono brevissime: l'aggregatore risolve **fuori** dal lock e lo
+prende solo per gli `add_stack` in batch; la UI lo prende solo per calcolare il
+`layout`. Contesa trascurabile. **Futuro**: se emergessero stalli UI, si passerà
+a pubblicare uno snapshot immutabile *render-only* (`FlameView`) via arc-swap.
+**Conseguenza**: meno codice e nessun clone costoso ora, senza toccare la
+garanzia lock-free della hot path di Fase 1.
+
+### D17 — Flame graph renderizzato col Painter di egui (non pipeline wgpu custom)
+La roadmap prevedeva un renderer wgpu **custom** (un quad per nodo). Per la prima
+versione disegniamo invece i rettangoli col `Painter` di egui (`ui/flame.rs`).
+Motivi: per il numero di nodi in gioco (migliaia) egui è già performante e
+affidabile; è codice molto più semplice e — soprattutto — **verificabile
+eseguendo l'app** (la cattura ETW richiede admin, ma il rendering no). **Non è un
+cambio di stack**: egui disegna comunque via wgpu sotto, quindi non ricade nel
+divieto di cambiare stack senza discussione. Il renderer wgpu custom resta
+un'ottimizzazione futura, sensata solo per grafi enormi (>10⁵ nodi) o effetti
+particolari. **Conseguenza**: tab Flame interattiva (zoom/drill, ricerca, hover)
+con poco codice; `viz/` non è ancora necessario.
+
+### D18 — Formato `.argus`: binario manuale, versionato, zstd rinviato
+La persistenza di sessione (Fase 4, `persist.rs`) usa un formato binario
+little-endian con magic header `ARGUSCAP` + versione (`u16`) + byte di
+compressione. Scelte:
+- **Serializzazione manuale**, niente `serde`/`bincode`: i dati sono semplici
+  (scalari, `Vec<f32>`, albero flame), il round-trip è interamente testabile e
+  non aggiungiamo dipendenze di serializzazione (disciplina sulle dipendenze).
+- **Letture bounds-checked** via `util::bytes::ByteReader` (ritorna `Option`):
+  mai panic su file troncato o corrotto (no-panic policy). Pre-alloc limitata ai
+  byte disponibili → niente OOM su conteggi falsificati.
+- **Flame** serializzato con tabella nomi deduplicata + nodi piatti, ricostruito
+  con `FlameGraph::from_nodes` (valida i genitori, ignora i riferimenti errati).
+- **Compressione zstd rinviata**: aggiungerebbe `zstd-sys` (dipendenza C) per
+  file < 1 MB. Il byte `compression` nell'header permette di introdurla come
+  nuova versione del formato senza rotture.
+**Conseguenza**: record/replay senza nuove dipendenze pesanti, formato evolvibile.
+
+### D19 — Record/replay: auto-path + lista in-app, niente file dialog nativo
+Salva/apri sessione (Fase 4) senza dialog nativo:
+- **Salva**: file `.argus` auto-nominato (`<processo>-<epoch>.argus`) in
+  `%LOCALAPPDATA%\Argus\captures`. **Apri**: lista in-app dei `.argus`
+  (scansionata dal sampler, pubblicata via `ArcSwap<Vec<PathBuf>>`). Evita la
+  dipendenza `rfd` o codice `unsafe` su comdlg32. Il dialog nativo resta una
+  nicety futura.
+- **Replay**: nuovo `Status::Replay`; il sampler inietta lo `Snapshot`
+  ricostruito (`Capture::to_snapshot`) e il flame caricato, e non li sovrascrive
+  (handle `None`; il controllo "target uscito" è ora gated su handle live, così
+  il replay non viene scambiato per un processo terminato).
+- **notice**: campo transitorio nello `Snapshot` per il feedback UI
+  (salvato/caricato/errore).
+**Conseguenza**: record/replay completo, zero nuove dipendenze.
+
+### D20 — La sessione ETW PROFILE richiede `SeSystemProfilePrivilege` abilitato
+Scoperto col **test live elevato** (`tests/etw_live.rs`): da amministratore,
+`StartTrace` del kernel logger con `EVENT_TRACE_FLAG_PROFILE` ritornava **1314
+(ERROR_PRIVILEGE_NOT_HELD)**. *Avere* il privilegio (come admin) non basta: va
+**abilitato** nel token via `AdjustTokenPrivileges`, come `SeDebugPrivilege`.
+Fix: `enable_privilege(name)` generico in `util/win.rs`, e `EtwProfiler::start`
+chiama `enable_privilege("SeSystemProfilePrivilege")` prima di `StartTrace` (e
+mappa 1314 → `Permission`). **Verificato end-to-end** (run elevato): 7690 stack
+reali catturati dal fixture, tutti del PID target, profondità fino a 99, flame
+costruito. **Ordine confermato leaf-first** (`frames[0]`=foglia,
+`frames[ultimo]`=`ntdll!RtlUserThreadStart`) → il `.rev()` in `profiling.rs` è
+corretto, flame orientato bene. Simboli: moduli di sistema risolti coi nomi
+(ntdll/kernel32); i nomi funzione del *target* richiedono l'approccio on-disk
+(D14) — ora si vede `modulo!0xADDR` (degrado graceful).
+**Conseguenza**: la cattura ETW live funziona da admin; coperta da un test
+d'integrazione `#[ignore]`d ri-eseguibile elevato.
+
+### D21 — Lock contention via `KWAIT_REASON`, non un provider extra
+I `CSwitch` portano già `OldThreadWaitReason` (parsato in `cswitch.rs` ma prima
+scartato). Invece di aggiungere un provider, lo **propaghiamo** ai segmenti
+Waiting della timeline e lo **categorizziamo** (`wait_category`: Lock/IO/UserIdle/
+Preempted) dai valori dell'enum NT `KWAIT_REASON`. `wait_breakdown` quantifica la
+contesa; la UI Timeline mostra "Attese per causa" + tooltip per segmento. Costo
+quasi nullo, nessun evento in più. Verificato live (1535 CSwitch).
+
+### D22 — Disk I/O detail sullo stesso kernel logger (provider `DiskIo`)
+Aggiunto `EVENT_TRACE_FLAG_DISK_IO` alla sessione esistente (non una nuova
+sessione): `capture/diskio.rs` decodifica `DiskIo_TypedData` (TransferSize@8,
+ByteOffset@16, HighResResponseTime dopo i due puntatori), `aggregation/diskstats.rs`
+aggrega per direzione e per disco. Gli eventi sono **di sistema** (niente PID nel
+payload): misurano l'attività disco complessiva durante la cattura — etichettato
+così nella UI. **Layout validato live**: una scrittura-probe di 16 MB dà 16.4 MB
+in `diskstats.write` → offset corretti. *Rinviati*: nome file per operazione
+(serve provider `FileIo` + correlazione `FileObject`) e percentili di latenza
+calibrati (serve la frequenza QPC). Heap allocations invece **richiederebbe un
+secondo tipo di sessione** ETW → rinviato come aggiunta architetturale separata.
+
+### D23 — Overhead misurato come dilatazione a lavoro fisso
+`fixture bench` esegue un lavoro deterministico single-thread (non a tempo) e
+stampa l'elapsed; `tests/overhead.rs` (#[ignore], admin+release) confronta la
+mediana con/senza sessione ETW attiva. Il sampling kernel è system-wide, quindi
+il filtro per PID non cambia il costo: misura reale. Risultato: **2.21%** su un
+loop CPU-bound stretto — caso peggiore per il sampling (massima frequenza di
+interruzioni); il target <1% di `01-vision` vale per carichi reali con attese.
+
+### D24 — JSON/CI/cargo-deny sì, zstd/PNG no (disciplina dipendenze)
+Export **JSON** scritto a mano (niente serde): dati semplici, nessuna dipendenza.
+**CI** GitHub Actions (windows: fmt/clippy/test/build) + **cargo-deny** (licenze/
+advisory) come da `03-tech-stack`. **Non** aggiunti: compressione zstd del `.argus`
+(file minuscoli, `zstd-sys` introduce una libreria C → supply-chain; D18 lo
+rinviava già, header forward-compatible) ed export PNG (ridondante con l'SVG già
+condivisibile, `image` è un albero deps grande). Coerente con "no dipendenze
+comode" di `CLAUDE.md`.
+
+### D25 — Memoria: hard fault + VirtualAlloc, non heap-level (vincolo no-injection)
+Il provider `PageFault` sul kernel logger dà due segnali catturabili su un
+processo **già in esecuzione senza modificarlo**: hard page fault (opcode 32,
+flag `MEMORY_HARD_FAULTS` — page-in da disco, filtrati sui TID del target) e
+VirtualAlloc/VirtualFree (opcode 98/99, flag `VIRTUAL_ALLOC` — riserve di VM,
+filtrate sul PID nel payload). Si abilitano solo questi flag (no soft fault, che
+sono altissima frequenza → flood). `capture/memevents.rs` + `aggregation/memstats.rs`.
+**Validato live**: con il fixture che fa churn di blocchi da 16 MB durante la
+cattura → 19 VirtualAlloc = 304 MB, granularità 16 MB. Il tracking a livello
+**`HeapAlloc`** (per-allocazione) **non è fattibile** rispettando il vincolo
+non-negoziabile di Argus ("attach a un processo in esecuzione senza injection né
+modificarlo", `CLAUDE.md`): la tracciatura heap di Windows richiede che il target
+abbia il tracing abilitato **al lancio** (IFEO `TracingFlags`, o `tracelog -heap`),
+cosa impossibile da attivare retroattivamente su un processo arbitrario già avviato
+senza iniettare codice o rilanciarlo. VirtualAlloc (granularità di pagina) è
+l'alternativa compatibile che forniamo; heap-level resta fuori scope by design.
+
+### D26 — `.argus` v2: persiste le metriche ETW profonde; latenza disco p50/p99
+Due completamenti di deliverable previsti:
+- **Latenza disco**: `DiskStats` tiene un istogramma log2 dei tempi di risposta
+  (memoria costante, O(1) insert) → `p50`/`p99` raw; `util/win::qpc_frequency`
+  (cache `OnceLock`) calibra i tick QPC del trace in **ms**. UI: riga "Latenza per
+  operazione" nella sezione Disco. Resta solo il **nome file** per operazione
+  (correlazione `FileObject`→nome via provider `FileIo`).
+- **Formato `.argus` v2**: `Capture` ora porta `wait` (`WaitBreakdown`), `mem`
+  (`MemStats`) e `disk` (`DiskSnapshot`, proiezione read-only serializzabile),
+  scritti in coda al flame. La **lettura accetta anche v1** (campi nuovi → default):
+  backward-compatible. L'export **JSON** include `wait`/`memory`/`disk`. Coperto da
+  test (round-trip v2, lettura v1, JSON). **Nota**: il *replay a video* di queste
+  metriche non è ancora cablato (la UI di replay mostra metriche+flame; i dati
+  profondi sono nel file e nel JSON, ma per mostrarli a schermo va ripopolato
+  `shared.disk/mem` in replay) — vedi `07-roadmap.md`.
 
 ## Questioni aperte
 
-- **Budget RAM** — *risolto*. Si distinguono due grandezze: (a) le **allocazioni
-  proprie** di Argus (snapshot, storie, lista processi) → <1 MB oggi, budget < 50
-  MB in Fase 1 e < 150 MB in Fase 2-3 (stack samples ~19 MB + cache simboli); (b)
-  l'**RSS totale** del processo (~304 MB) → quasi interamente working set del
-  driver GPU/wgpu, non controllabile e in linea con qualunque app wgpu. Niente cap
-  rigido sull'RSS; il test di stabilità 8h verifica solo che **non cresca** (no
-  leak). CLAUDE.md, `02` e `07` sono allineati a questa distinzione.
-- **Dimensione binario release** — *risolto*: `argus.exe` = **10.78 MB** (release,
-  LTO thin + strip), sotto il target <15 MB.
-- **Gate `cargo fmt --check` mai applicato** — *nuovo*. Il codice committato non
-  passa `cargo fmt --check` (rustfmt 1.8, default `max_width` 100; nessun
-  `rustfmt.toml` nel repo): il gate è documentato in CLAUDE.md ma di fatto non è
-  mai stato rispettato. Decisione in sospeso con l'utente — (1) `cargo fmt` una
-  tantum su tutto il repo, (2) `rustfmt.toml` su misura, o (3) rilassare il gate.
-  Non toccato in autonomia perché riformatterebbe parecchio codice scritto a mano.
+- **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto
+  nei docs. Quasi tutto è overhead del driver GPU/wgpu (le strutture dati di
+  Argus sono <1 MB). Da decidere: rivedere il budget o misurare separatamente la
+  "RAM nostra".
+- ~~**Dimensione binario release**: da misurare contro il target <15 MB.~~
+  **Risolto**: 10.62 MB in release (Fase 2), ben sotto il target.
 - **Edge case di affidabilità** non ancora testati in modo dedicato: GPU device
   lost, sistema low-memory (vedi tabella in [`06-reliability.md`](06-reliability.md)).

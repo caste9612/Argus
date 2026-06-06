@@ -5,9 +5,6 @@
 //! (enumerazione, nomi, memoria, tempi CPU, thread, sessione) contro un carico
 //! deterministico — senza mock.
 
-// Codice di test: unwrap/expect liberi (la no-panic policy vale per la produzione).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use argus::capture::process::{list_processes, open_process, ProcessInfo};
 use std::process::Command;
 use std::thread::sleep;

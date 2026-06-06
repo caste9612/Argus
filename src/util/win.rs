@@ -6,6 +6,7 @@ use windows::Win32::Security::{
     AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
     TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
+use windows::Win32::System::Performance::QueryPerformanceFrequency;
 use windows::Win32::System::SystemInformation::GetSystemInfo;
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -30,6 +31,24 @@ pub fn filetime_to_u64(ft: &FILETIME) -> u64 {
     ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
 }
 
+/// Frequenza del Query Performance Counter (tick al secondo), costante dal boot.
+/// Serve a convertire i tempi in tick QPC (es. il response time del DiskIo, che
+/// usa il clock QPC del trace) in millisecondi. Cache via `OnceLock`.
+pub fn qpc_frequency() -> u64 {
+    use std::sync::OnceLock;
+    static FREQ: OnceLock<u64> = OnceLock::new();
+    *FREQ.get_or_init(|| {
+        let mut f: i64 = 0;
+        // SAFETY: scrive un i64 locale; non fallisce su hardware con QPC (sempre, da XP).
+        let ok = unsafe { QueryPerformanceFrequency(&mut f).is_ok() };
+        if ok && f > 0 {
+            f as u64
+        } else {
+            10_000_000 // fallback ragionevole (100 ns/tick) se non disponibile
+        }
+    })
+}
+
 /// Numero di processori logici visti dal sistema (min 1).
 pub fn logical_cpu_count() -> u32 {
     // SAFETY: GetSystemInfo riempie una struct che azzeriamo prima; nessun puntatore
@@ -41,11 +60,12 @@ pub fn logical_cpu_count() -> u32 {
     }
 }
 
-/// Tenta di abilitare `SeDebugPrivilege` per il processo corrente.
+/// Tenta di abilitare un privilegio (per nome) nel token del processo corrente.
 ///
-/// Ha effetto solo se Argus gira come amministratore; altrimenti è un no-op
-/// innocuo. Ritorna `true` se il privilegio è stato effettivamente concesso.
-pub fn enable_debug_privilege() -> bool {
+/// Ha effetto solo se il processo ha quel privilegio assegnato (es. da
+/// amministratore); altrimenti è un no-op innocuo. Ritorna `true` se il
+/// privilegio è stato effettivamente abilitato.
+pub fn enable_privilege(name: &str) -> bool {
     // SAFETY: sequenza standard OpenProcessToken → LookupPrivilegeValue →
     // AdjustTokenPrivileges. Il token è chiuso dall'HandleGuard. Tutti i puntatori
     // passati sono a variabili locali vive per la durata delle chiamate.
@@ -62,11 +82,11 @@ pub fn enable_debug_privilege() -> bool {
         }
         let _guard = HandleGuard(token);
 
-        let name: Vec<u16> = "SeDebugPrivilege\0".encode_utf16().collect();
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         let mut luid = LUID::default();
         if LookupPrivilegeValueW(
             windows::core::PCWSTR::null(),
-            windows::core::PCWSTR(name.as_ptr()),
+            windows::core::PCWSTR(wide.as_ptr()),
             &mut luid,
         )
         .is_err()
@@ -89,4 +109,9 @@ pub fn enable_debug_privilege() -> bool {
         // privilegio: ERROR_NOT_ALL_ASSIGNED (1300) lo segnala. 0 = concesso.
         GetLastError().0 == 0
     }
+}
+
+/// Abilita `SeDebugPrivilege` (accesso esteso ai processi). Utile solo da admin.
+pub fn enable_debug_privilege() -> bool {
+    enable_privilege("SeDebugPrivilege")
 }

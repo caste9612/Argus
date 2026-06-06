@@ -3,9 +3,11 @@
 //! Osserva il processo target **senza modificarlo**: solo API Win32 read-only e
 //! snapshot Toolhelp. Niente injection, niente hook. Vedi `docs/02-architecture.md`.
 
-pub mod process;
-pub mod sampler;
-
-/// Spike ETW di Fase 2 — opt-in dietro la feature `etw` (vedi `09-decisions.md` D14).
-#[cfg(feature = "etw")]
+pub mod cswitch;
+pub mod diskio;
 pub mod etw;
+pub mod memevents;
+pub mod process;
+pub mod profiling;
+pub mod sampler;
+pub mod symbols;

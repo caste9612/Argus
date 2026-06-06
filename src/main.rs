@@ -24,12 +24,32 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
+    // `--attach <pid>`: si collega subito; `--tab <dashboard|flame|timeline|diff>`:
+    // sceglie la tab iniziale.
+    let args: Vec<String> = std::env::args().collect();
+    let arg_after = |key: &str| -> Option<&String> {
+        args.iter()
+            .position(|a| a == key)
+            .and_then(|i| args.get(i + 1))
+    };
+    let initial_pid = arg_after("--attach").and_then(|s| s.parse::<u32>().ok());
+    let initial_tab = arg_after("--tab").and_then(|s| match s.to_lowercase().as_str() {
+        "dashboard" | "metriche" => Some(argus::ui::Tab::Dashboard),
+        "flame" => Some(argus::ui::Tab::Flame),
+        "timeline" => Some(argus::ui::Tab::Timeline),
+        "diff" => Some(argus::ui::Tab::Diff),
+        _ => None,
+    });
+    if let Some(pid) = initial_pid {
+        info!("auto-attach da riga di comando: PID {pid}");
+    }
+
     eframe::run_native(
         "Argus",
         options,
-        Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(ArgusApp::new()))
+        Box::new(move |cc| {
+            argus::ui::theme::apply(&cc.egui_ctx);
+            Ok(Box::new(ArgusApp::new(initial_pid, initial_tab)))
         }),
     )
 }

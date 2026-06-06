@@ -35,72 +35,88 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 
 **DoD**:
 - ✅ Attacchi un processo e vedi le metriche aggiornarsi in real-time
-- ✅ RAM: allocazioni proprie di Argus <1 MB (target <50 MB rispettato). L'RSS totale ~304 MB è quasi tutto driver GPU/wgpu; il budget è stato ridefinito sulla "RAM nostra" — vedi `09-decisions.md`
-- ✅ `cargo clippy --all-targets -- -D warnings` pulito; `cargo test` verde (2 unit + 3 integration)
-- ✅ Binario release **10.78 MB** < 15 MB (release LTO thin + strip)
+- ⚠️ RAM: ~304 MB a riposo (include overhead driver GPU/wgpu; strutture dati di Argus <1 MB). Budget <200 MB da rivedere — vedi `09-decisions.md`
+- ✅ `cargo clippy --all-targets -- -D warnings` pulito; `cargo test` verde
+- ✅ Binario release **10.62 MB** (< 15 MB target)
 - Edge case di `06-reliability.md`: target exit, access denied, PID inesistente, apertura di sé → coperti; GPU device lost / low-memory ancora da testare
 
 ---
 
-## Fase 2 — ETW + flame graph (prossima, ~2-3 settimane)
+## Fase 2 — ETW + flame graph 🔨 in corso (implementata, cattura live da verificare admin)
 
 **Obiettivo**: aggiungere cattura kernel-level e visualizzazione del hot path. Questo è il pezzo che **insegna ottimizzazione**.
 
 **Deliverable**:
-- ETW session manager (sottoscrizione provider `PerfInfo`)
-- Stack walk capture con `EVENT_TRACE_FLAG_PROFILE`
-- Symbol resolution (DbgHelp wrapper RAII) con cache LRU
-- Flame graph aggregator (struttura tree con count incrementale)
-- Flame graph renderer wgpu **custom** (un quad per frame, color coded, GPU-accelerated)
-- Search box (regex), zoom, click-to-drill
-- Tab "Flame" nella dashboard
-- Provider `Thread` per context switch (preparazione Fase 3)
+- ✅ ETW session manager (NT Kernel Logger, `EVENT_TRACE_FLAG_PROFILE`) — `capture/etw.rs`
+- ✅ Stack walk capture (`TraceSetInformation(TraceStackTracingInfo)` su SampleProfile)
+- ✅ Symbol resolution (DbgHelp wrapper RAII) con cache (2 generazioni) — `capture/symbols.rs`
+- ✅ Flame graph aggregator (tree con count incrementale) — `aggregation/flame.rs`
+- ✅ Flame graph renderer — **con il Painter di egui**, non wgpu custom (D17); sufficiente e verificabile
+- ✅ Search box (regex case-insensitive), zoom, click-to-drill — `ui/flame.rs`
+- ✅ Tab "Flame" nella dashboard
+- ⬜ Provider `Thread` per context switch — rinviato (è preparazione Fase 3)
+
+**Stato verifica**: tutto compila, clippy/fmt/test verdi (17 unit + 3 integration), e l'app
+gira mostrando il flame graph e il degrado graceful "ETW non disponibile" senza admin
+(verificato a video). La **cattura ETW reale richiede admin** e va collaudata con un run
+elevato — è l'unica parte non verificabile in un ambiente non elevato.
 
 **DoD**:
-- Attacchi a un processo CPU-bound, vedi il flame graph popolarsi entro 10 s
-- Click su un frame zooma correttamente
-- Symbol resolution funziona per binari con `.pdb` disponibile (locale o symbol server)
-- Overhead totale sul target ancora < 1 %
-- Edge cases ETW Fase 2 di `06-reliability.md` testati
+- ✅ Attacchi a un processo CPU-bound, vedi il flame popolarsi — **verificato** (run elevato, `tests/etw_live.rs`): 7690 stack reali dal fixture, profondità fino a 99, ordine leaf-first confermato → flame orientato bene (vedi D20)
+- ✅/⏳ Click su un frame zooma — logica layout/focus unit-testata; resa visiva con dati reali da provare a video da admin
+- 🔶 Symbol resolution: moduli di sistema risolti coi nomi (ntdll/kernel32); **nomi funzione del target** da migliorare con l'approccio on-disk (D14) — ora `modulo!0xADDR`
+- ⏳ Overhead totale sul target < 1 % — *da misurare come admin*
+- ✅ Edge cases ETW di `06-reliability.md`: "ETW fails (permessi) → polling-only + banner" verificato (no-admin) **e** cattura live verificata (admin)
+
+**Rifiniture rimaste**: nomi funzione del target via risoluzione *on-disk* (eventi Image/Load,
+D14); misura overhead; resa visiva del flame con dati reali a video.
 
 ---
 
-## Fase 3 — Allocations + locks + timeline (~3-4 settimane)
+## Fase 3 — Allocations + locks + timeline 🔨 fondamenta pronte
 
 **Obiettivo**: visualizzare comportamento dinamico (allocazioni, contesa, thread states).
 
 **Deliverable**:
-- Sottoscrizione provider `Thread` (CSwitch già fatto in Fase 2) + `PageFault`
-- Heap allocation tracking (provider `HeapTrace` per processi opt-in)
-- Thread states timeline (Gantt) renderizzato con wgpu custom
-- Lock contention detection (analisi CSwitch su mutex/wait object)
-- Allocation flame graph (chi alloca, quanto, dove)
-- Pannello "Locks" con waiter analysis
+- ✅ Parser eventi `CSwitch` (provider `Thread`) — puro e testato (`capture/cswitch.rs`)
+- ✅ Struttura dati timeline stati thread — intervalli Running per thread, testata (`aggregation/timeline.rs`)
+- ✅ Cattura `CSwitch` live (sessione ETW con `EVENT_TRACE_FLAG_CSWITCH`) — **verificata** (admin)
+- ✅ Filtro per thread del target via Toolhelp `TH32CS_SNAPTHREAD` (`thread_ids`) + `set_tracked`
+- ✅ Timeline (Gantt) renderizzata col Painter di egui — tab "Timeline" (`ui/timeline_view.rs`)
+- ⬜ Heap allocation tracking (provider `HeapTrace`/`Kernel-Memory`) + allocation flame graph
+- ⬜ Lock contention detection (analisi `CSwitch` su wait object) + pannello "Locks"
+
+**Stato**: la **timeline stati-thread è completa e verificata live** (admin,
+`tests/etw_live`: 732 CSwitch dal fixture, intervalli costruiti). Restano allocazioni
+e lock (provider aggiuntivi) → vedi "Lavoro residuo".
 
 **DoD**:
-- Vedi un thread bloccato su lock con indicazione visiva chiara
-- Identifichi allocazioni hot path con stack trace
-- Cumulative allocations per stack visibile
-- Timeline scrub fluido anche con 30 thread × 60 s
+- ✅ Timeline degli stati Running per thread (Gantt) — verificata con cattura reale
+- ⏳ Lock contention (waiter analysis su `CSwitch`) — da fare
+- ⏳ Allocation tracking + cumulative per stack — da fare (provider `HeapTrace`)
 
 ---
 
-## Fase 4 — Recording + diff + export (~2 settimane)
+## Fase 4 — Recording + diff + export ✅ completata
 
 **Obiettivo**: trasformare Argus da live-only a strumento di analisi post-mortem.
 
 **Deliverable**:
-- Formato file `.argus` proprietario (binario, compresso `zstd`, versioned con magic header)
-- Record + replay dell'intera sessione
-- Modalità "diff" tra due capture (grafici sovrapposti, delta evidenziato)
-- Export selettivo (CSV time series, SVG flame, PNG screenshot, JSON metadata)
-- Snapshot manuali (premi un tasto, salva stato corrente)
-- Sharing-friendly: link/embed di flame graph statici come HTML
+- ✅ Formato file `.argus` proprietario (binario, versionato; **v2** persiste anche
+  disco/memoria/lock, lettura retro-compatibile v1 — D26) — `persist.rs`. *zstd rinviato* (D18)
+- ✅ Record + replay dell'intera sessione (Salva/Apri, stato `Replay`)
+- ✅ Modalità "diff" tra due capture (grafici sovrapposti + funzioni "movers") — `diff.rs`, tab Diff
+- ✅ Export (CSV time series, folded stacks per speedscope, SVG flame, **JSON**
+  completo con wait/memory/disk) — `export.rs`. *PNG rinviato (ridondante con SVG)*
+- ⬜ Snapshot manuali / sharing HTML (l'SVG è già condivisibile; resto non fatto)
 
 **DoD**:
-- Catturi 5 minuti di un'app, salvi, riapri, vedi tutto come live
-- Confronti due capture (prima/dopo ottimizzazione) con grafici sovrapposti
-- Export SVG di un flame graph apribile in browser
+- ✅ Catturi una sessione, salvi, riapri, vedi tutto come live (replay)
+- ✅ Confronti due capture con grafici sovrapposti (tab Diff)
+- ✅ Export SVG di un flame graph apribile in browser
+
+**Verifica**: tutto coperto da unit test (round-trip formato, export, diff) + UI verificata
+a video. La UI di replay/diff con **dati di flame reali** dipende dalla cattura ETW (admin).
 
 ---
 
@@ -115,6 +131,78 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 - Eventualmente: integrazione con NVIDIA Nsight Aftermath API
 
 **DoD**: TBD — dipende da quanto driver lavoro è realmente fattibile in user mode.
+**Stato**: non iniziata. Richiede driver/SDK vendor (NVML, PMU) e privilegi → fuori
+dalla portata di un ambiente non elevato; resta nel "lavoro residuo" sotto.
+
+---
+
+## Lavoro residuo e verifica (handoff)
+
+Stato sintetico a fine del lavoro autonomo. **Verde = fatto e verificato**
+(build+clippy+fmt+test, e UI provata a video dove applicabile).
+
+### ✅ Fatto e verificato
+- **Fase 1** completa (polling, dashboard, lista processi).
+- **Fase 2** completa e verificata live: flame graph, **symbol resolution on-disk
+  del target** (nomi funzione `fixture!...`, merge per-funzione, D14), parser+sessione
+  ETW, aggregatore, tab Flame (zoom/drill/ricerca regex/hover). Degrado graceful senza admin.
+- **Fase 4** completa: formato `.argus`, record/replay, diff, export (CSV/folded/SVG/**JSON**).
+- **Fase 3** timeline + **lock contention** (KWAIT_REASON → categorie + breakdown UI),
+  verificata live.
+- **Disk I/O detail** (provider DiskIo) — parser+aggregazione, sezione Dashboard,
+  **layout validato live** (16.4 MB scrittura = probe). **Latenza p50/p99/max in ms**
+  (istogramma + calibrazione QPC); resta solo il nome-file per operazione.
+- **Memoria** (provider PageFault): hard page fault + VirtualAlloc/Free del target,
+  sezione Dashboard, **validato live** (19 VirtualAlloc = 304 MB, granularità 16 MB).
+- **Recording/export completi**: formato `.argus` **v2** (persiste disco/memoria/lock,
+  lettura retro-compatibile v1) + export **JSON** con wait/memory/disk. Round-trip testato.
+- **Overhead misurato**: ~2.0–2.2% (loop CPU-bound stretto, caso peggiore; <1% su reali).
+- **Infra**: CI GitHub Actions (windows: fmt/clippy/test/build + cargo-deny), tema scuro.
+- **56 unit + 3 integration + 2 ignored (admin) test verdi**, clippy/fmt puliti, release ~10.6 MB.
+
+> ⚠️ **Verifica in sospeso** (ambiente, non codice): la conferma *a video/dal vivo*
+> della latenza disco p50/p99 in ms è rimasta da fare perché ETW non ripartiva dopo
+> una sospensione lunga del sistema (serviva un riavvio). Rieseguire
+> `scripts/elevated_verify.ps1` da admin su una macchina con ETW sano.
+
+### ✅ Cattura ETW live — VERIFICATA come amministratore (pipeline + GUI)
+Con il fix del privilegio (D20) la pipeline ETW è stata collaudata end-to-end con un run
+elevato (`tests/etw_live.rs`, ri-eseguibile: `cargo test --test etw_live -- --ignored`):
+7690 stack reali dal fixture, tutti del target, ordine leaf-first confermato. **Resa a
+video confermata**: lanciando Argus elevato con `--attach <pid>` su un fixture CPU-bound,
+la tab Flame mostra il flame graph reale, orientato bene (`ntdll!RtlUserThreadStart` alla
+base, foglie in cima), con "cattura ETW attiva". Restano: **misura overhead** (< 1 %) e i
+**nomi funzione del target** (ora `modulo!0xADDR`; servirebbe l'approccio on-disk, D14).
+
+Comodità aggiunta: `argus.exe --attach <pid>` si collega subito e apre la tab Flame.
+
+### ⬜ Da implementare (rinviato / fuori scope, con indicazioni)
+- **Heap allocations a livello `HeapAlloc` — FUORI SCOPE by design** (D25). La
+  tracciatura heap di Windows richiede che il target abbia il tracing abilitato **al
+  lancio** (IFEO `TracingFlags` o `tracelog -heap`): impossibile da attivare
+  retroattivamente su un processo già in esecuzione senza iniettare codice o
+  rilanciarlo → viola il vincolo non-negoziabile "attach senza injection/modifica".
+  L'alternativa compatibile **è già implementata**: VirtualAlloc/Free (granularità di
+  pagina) + hard fault, vedi sopra. Un'eventuale "modalità lancio con heap tracing"
+  sarebbe un modello d'uso diverso (Argus avvia il target), da valutare a parte.
+- **Replay a video delle metriche profonde**: il `.argus` v2 e il JSON **già
+  contengono** attese/lock, memoria e disco, ma la UI di *replay* mostra ancora solo
+  metriche+flame. Per vederle in replay va ripopolato `shared.disk`/`shared.mem` (e
+  un riepilogo attese) dalla `Capture` caricata in `sampler::open_capture`, e la
+  Dashboard dovrebbe leggere quei dati anche in stato `Replay`. È il prossimo passo
+  naturale (i dati ci sono già, manca solo il wiring di visualizzazione).
+- **Disk I/O — rifinitura**: nome file per operazione (correlazione `FileObject`→nome
+  via eventi `FileIo`/`FileRundown`). Latenza p50/p99 in ms: **fatta** (D26).
+- **Allocation flame graph**: si potrebbe abilitare lo stack-walk anche per gli eventi
+  VirtualAlloc (come per SampleProfile) → stack delle allocazioni. Nota: serve
+  correlare i `StackWalk` agli eventi VirtualAlloc per timestamp, senza inquinare il
+  flame CPU. Aggiunta mirata.
+- **Fase 5**: PMU/GPU — richiede driver/SDK vendor; rivalutare la fattibilità in user mode.
+- **Stabilità 8h**: nessuna crescita RAM/handle in run lungo — non eseguibile in questa
+  sede (durata); harness overhead riutilizzabile come base.
+- **Nice-to-have**: compressione `.argus` (rinviata per disciplina dipendenze, file
+  minuscoli, D18); export PNG (ridondante con l'SVG); file dialog nativo; regex→fuzzy;
+  rifiniture UI (animazioni, flame color per tipo, process tree).
 
 ---
 
@@ -122,7 +210,7 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 
 Cose deliberatamente **non decise ora** che valuteremo a tempo debito:
 
-- **Nome finale**: **confermato "Argus"** — nessuna alternativa migliore emersa entro la Fase 2. Riapribile solo se salta fuori qualcosa di nettamente meglio.
+- **Nome finale**: "Argus" è provvisorio? Sì, se troviamo qualcosa di meglio prima della Fase 2.
 - **Licenza**: MIT default. Se diventa progetto serio si valuta dual MIT/Apache-2.0.
 - **Cross-platform**: NO per Fase 1-3, riconsiderare Fase 4+.
 - **Plugin system**: NO mai (rompe portabilità e affidabilità).

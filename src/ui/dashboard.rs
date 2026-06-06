@@ -1,8 +1,11 @@
 //! Pannello centrale: KPI card + grafici time-series del processo collegato.
 
 use super::kpi;
+use crate::aggregation::diskstats::DiskStats;
+use crate::aggregation::memstats::MemStats;
 use crate::aggregation::{Snapshot, Status};
 use eframe::egui;
+use parking_lot::Mutex;
 
 // Palette (vedi docs/05-ui-design.md).
 const BLUE: egui::Color32 = egui::Color32::from_rgb(124, 185, 255);
@@ -11,11 +14,15 @@ const TEAL: egui::Color32 = egui::Color32::from_rgb(127, 224, 185);
 const AMBER: egui::Color32 = egui::Color32::from_rgb(240, 198, 116);
 const PINK: egui::Color32 = egui::Color32::from_rgb(255, 165, 224);
 
-pub fn render(ui: &mut egui::Ui, snap: &Snapshot) {
+pub fn render(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>, mem: &Mutex<MemStats>) {
     match &snap.status {
         Status::NotAttached | Status::Error(_) => placeholder(ui),
-        Status::Running | Status::Exited => dashboard(ui, snap),
+        Status::Running | Status::Exited | Status::Replay(_) => dashboard(ui, snap, disk, mem),
     }
+}
+
+fn mb(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 fn placeholder(ui: &mut egui::Ui) {
@@ -29,7 +36,7 @@ fn placeholder(ui: &mut egui::Ui) {
     });
 }
 
-fn dashboard(ui: &mut egui::Ui, snap: &Snapshot) {
+fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>, mem: &Mutex<MemStats>) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -143,5 +150,130 @@ fn dashboard(ui: &mut egui::Ui, snap: &Snapshot) {
                     snap.total_io_read_mb, snap.total_io_write_mb
                 ));
             });
+
+            ui.add_space(8.0);
+            disk_section(ui, disk);
+
+            ui.add_space(8.0);
+            mem_section(ui, mem);
         });
+}
+
+/// Dettaglio memoria dagli eventi PageFault/VirtualAlloc ETW (filtrati sul
+/// target): mostrato solo quando ci sono dati.
+fn mem_section(ui: &mut egui::Ui, mem: &Mutex<MemStats>) {
+    let m = mem.lock();
+    if m.is_empty() {
+        return;
+    }
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Memoria (ETW)").strong());
+            ui.weak("· del target durante la cattura");
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            kpi::card(
+                ui,
+                "Hard page fault",
+                &format!("{}", m.hard_faults),
+                PINK,
+                &format!(
+                    "Page-in da disco (fault costosi): {:.1} MB letti totali. \
+                     Alti = il working set non sta in RAM (paging).",
+                    mb(m.hard_fault_bytes)
+                ),
+            );
+            kpi::card(
+                ui,
+                "VirtualAlloc",
+                &format!("{:.1} MB", mb(m.valloc_bytes)),
+                PURPLE,
+                &format!(
+                    "{} riserve/commit di memoria virtuale (granularità di pagina, \
+                     non HeapAlloc).",
+                    m.valloc_count
+                ),
+            );
+            let net = m.net_alloc_bytes();
+            kpi::card(
+                ui,
+                "Saldo netto",
+                &format!("{:+.1} MB", net as f64 / (1024.0 * 1024.0)),
+                if net > 0 { AMBER } else { TEAL },
+                "VirtualAlloc − VirtualFree: positivo e crescente = la memoria \
+                 virtuale riservata sale (possibile crescita/leak).",
+            );
+        });
+    });
+}
+
+/// Dettaglio disco dagli eventi DiskIo ETW (di sistema): mostrato solo quando
+/// ci sono dati (cattura ETW attiva e disco usato).
+fn disk_section(ui: &mut egui::Ui, disk: &Mutex<DiskStats>) {
+    let d = disk.lock();
+    if d.is_empty() {
+        return;
+    }
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Disco fisico (ETW)").strong());
+            ui.weak("· attività di sistema durante la cattura, non solo del target");
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            kpi::card(
+                ui,
+                "Disco lettura",
+                &format!("{:.1} MB", mb(d.read.bytes)),
+                TEAL,
+                &format!(
+                    "{} operazioni · {} KB/op in media",
+                    d.read.ops,
+                    d.read.avg_size() / 1024
+                ),
+            );
+            kpi::card(
+                ui,
+                "Disco scrittura",
+                &format!("{:.1} MB", mb(d.write.bytes)),
+                AMBER,
+                &format!(
+                    "{} operazioni · {} KB/op in media",
+                    d.write.ops,
+                    d.write.avg_size() / 1024
+                ),
+            );
+        });
+        ui.add_space(4.0);
+        // Latenza: tick QPC grezzi → ms (clock del trace = QPC). p50/p99/max.
+        let qpf = crate::util::win::qpc_frequency().max(1) as f64;
+        let to_ms = |raw: u64| raw as f64 / qpf * 1000.0;
+        ui.label(
+            egui::RichText::new(format!(
+                "Latenza per operazione:  mediana {:.2} ms  ·  p99 {:.2} ms  ·  max {:.2} ms",
+                to_ms(d.p50_response_raw()),
+                to_ms(d.p99_response_raw()),
+                to_ms(d.max_response_raw())
+            ))
+            .small(),
+        )
+        .on_hover_text(
+            "Tempo di risposta delle operazioni di disco, dal clock del trace (QPC). \
+             p99 alto = code di latenza occasionali (disco sotto pressione).",
+        );
+        ui.add_space(2.0);
+        for (disk_n, r, w) in d.disks_by_bytes().into_iter().take(6) {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Disco {disk_n}:  letti {:.1} MB ({} op)  ·  scritti {:.1} MB ({} op)",
+                    mb(r.bytes),
+                    r.ops,
+                    mb(w.bytes),
+                    w.ops
+                ))
+                .small(),
+            );
+        }
+    });
 }

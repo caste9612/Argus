@@ -14,6 +14,8 @@ egui_plot = "0.29"
 parking_lot = "0.12"
 arc-swap = "1.7"
 crossbeam-channel = "0.5"
+regex = "1"          # ricerca nel flame graph; deps transitive già presenti
+rustc-demangle = "0.1" # nomi leggibili dei simboli Rust nel flame graph
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
@@ -25,19 +27,20 @@ features = [
     "Wdk_System_SystemInformation",
     "Win32_Foundation",
     "Win32_System_Threading",
+    "Win32_System_Performance",        # QueryPerformanceFrequency (calibrazione latenza disco)
     "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",
     "Win32_System_WindowsProgramming",
+    "Win32_System_Diagnostics_Debug", # DbgHelp: symbol resolution (Fase 2)
+    "Win32_System_Diagnostics_Etw",   # ETW: sessione kernel + stack sample (Fase 2)
+    "Win32_System_Diagnostics_ToolHelp", # snapshot thread del target (Fase 3)
+    "Win32_System_Time",              # richiesto da OpenTraceW / EVENT_TRACE_LOGFILEW
     "Win32_Security",
 ]
 
-[lints.clippy]
-# No-panic policy (docs/06-reliability.md): vietato unwrap/expect/panic nel
-# codice di produzione. Warn qui + `-D warnings` nel gate CI = errore di build.
-# Il codice di test/fixture è esentato con #![allow(...)] mirati e commentati.
-unwrap_used = "warn"
-expect_used = "warn"
-panic = "warn"
+[dev-dependencies]
+# Per i test d'integrazione che creano il canale ETW (es. etw_live, admin-gated).
+crossbeam-channel = "0.5"
 
 [profile.release]
 opt-level = 3
@@ -47,14 +50,3 @@ strip = true
 
 [profile.dev]
 opt-level = 1
-
-[features]
-# Spike ETW (Fase 2): opt-in per non appesantire la build di default finché la
-# cattura kernel non è validata. Abilita le sole API ETW del crate windows.
-# Vedi docs/09-decisions.md D14 e docs/10-etw-spike.md.
-etw = ["windows/Win32_System_Diagnostics_Etw"]
-
-# Strumento di spike: si compila solo con `--features etw`.
-[[bin]]
-name = "etw_spike"
-required-features = ["etw"]

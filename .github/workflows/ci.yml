@@ -1,0 +1,51 @@
+name: CI
+
+# Build/test/lint su Windows: Argus è un'app Win32 + ETW, gira solo qui.
+# Nota: il test `etw_live` è `#[ignore]` (richiede privilegi di amministratore),
+# quindi non viene eseguito in CI — la cattura ETW live va verificata a mano.
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  check:
+    name: build · test · clippy · fmt
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formattazione (cargo fmt --check)
+        run: cargo fmt --all -- --check
+
+      - name: Lint (clippy, warning = errore)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test (esclusi gli #[ignore] admin)
+        run: cargo test --all
+
+      - name: Build release
+        run: cargo build --release
+
+  deny:
+    name: cargo-deny (licenze + advisory)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

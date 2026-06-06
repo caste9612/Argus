@@ -149,3 +149,17 @@ Big number, label sopra, color semantico. Larghezza fissa, altezza fissa, compat
 - **No skeumorfismo** (no shadow ricchi, no gradient pesanti)
 - **No animazioni gratuite** (ogni animazione ha una funzione)
 - **No colori brillanti puri** (saturare-95 %, mai 100 %, faticano gli occhi)
+
+## Stato implementazione (aggiornato)
+
+- **Tema applicato** (`ui/theme.rs`, D20-area): la palette scura (background
+  `#0E0E12`, surface, accent `#7B61FF`, bordi) è impostata come `Visuals` egui
+  custom invece del dark di default; spacing su griglia ~4px; **numeri delle KPI
+  in monospace** (cifre allineate). Emoji rimosse da tab/bottoni. *Rinviato*: bundling
+  dei font Inter/JetBrains Mono (peso binario) — si usa il monospace integrato.
+- **Timeline**: legenda Running/Ready/Waiting + riga "Attese per causa"
+  (Lock/IO/Idle %) e tooltip per segmento con stato/causa/durata.
+- **Dashboard**: sezione "Disco fisico (ETW)" (R/W MB, n° op, dimensione media,
+  ripartizione per disco) quando la cattura ETW è attiva.
+- *Rinviati* (minori): animazioni di transizione tab, colore flame per tipo
+  (user/kernel/idle), vista process tree, hover line-chart con timestamp esatto.

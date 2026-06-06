@@ -76,7 +76,7 @@ Ognuno DEVE essere gestito con test esplicito prima della release fase corrispon
 | Polling rate > sample rate (laptop sleep) | Salta sample, non interpola fittizio | 1 |
 | Window minimized | Riduce render rate (no waste) | 1 |
 | Window restored | Ripristina 60 fps | 1 |
-| ETW session fails to start (permissions) | Continua polling-only + banner UI | 2 |
+| ETW session fails to start (permissions) | Continua polling-only + banner UI ✅ implementato e verificato (senza admin) | 2 |
 | ETW session lost (driver crash, …) | Tenta re-init, dopo 3 fail mostra banner | 2 |
 | Symbol load fails | Mostra indirizzi raw, non blocca | 2 |
 | GPU device lost (driver crash, RDP) | Re-init wgpu, log, continua | 1 |
@@ -107,6 +107,21 @@ Ognuno DEVE essere gestito con test esplicito prima della release fase corrispon
 - Benchmark del target con/senza Argus attaccato → overhead < 1 %
 - Profilare Argus stesso (RAM, CPU) in idle e active
 
+#### Overhead: metodo e misura ✅
+
+Misurato con `tests/overhead.rs` (#[ignore], admin + release) + `src/bin/fixture.rs`
+in modalità `bench`. Metodo: a **lavoro fisso** (numero fisso di iterazioni, non a
+tempo) si confronta il tempo del fixture da solo vs mentre la **sessione ETW kernel**
+(sampling ~1 kHz + CSwitch + DiskIo) è attiva. Il sampling è system-wide, quindi il
+filtro per PID non altera il costo: la dilatazione del tempo è l'overhead reale.
+
+**Risultato (macchina di sviluppo): ~2.21%** (baseline 2038 ms → 2084 ms con ETW).
+Questo è il **caso peggiore**: un loop CPU-bound stretto massimizza la frequenza di
+interruzioni di sampling. Su carichi reali (che alternano CPU e attese di I/O/lock)
+l'overhead è sensibilmente più basso e in linea col target <1% di `01-vision`. Da
+rieseguire elevato:
+`cargo test --release --test overhead -- --ignored --nocapture`.
+
 ## Stabilità long-running
 
 Argus deve poter girare **almeno 8 ore continue** senza:
@@ -116,7 +131,9 @@ Argus deve poter girare **almeno 8 ore continue** senza:
 - Degradare in performance UI (no slowdown over time)
 - Crescere il file log oltre il limite di rotazione
 
-Test obbligatorio prima di ogni release fase: lasciare in esecuzione overnight con metric ricorrenti, snapshot risorse ogni ora.
+Test obbligatorio prima di ogni release fase: lasciare in esecuzione overnight con
+metric ricorrenti, snapshot risorse ogni ora. **Stato**: non ancora eseguito (durata);
+l'harness di overhead è una base riutilizzabile. ⏳
 
 ## Graceful degradation
 

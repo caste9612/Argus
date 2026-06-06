@@ -3,7 +3,7 @@
 **Profiler portatile GPU-accelerato per Windows.**
 Vedi cosa fa davvero il tuo software, senza rallentarlo.
 
-> ✅ **Stato:** Fase 1 (MVP polling) **completata**. Lista processi raggruppata/ordinabile, attach/detach, metriche real-time (CPU, memoria, I/O, thread, handle) con dashboard GPU, test d'integrazione verdi. Prossima: Fase 2 (ETW + flame graph). Vedi [roadmap](docs/07-roadmap.md) e [decisioni](docs/09-decisions.md).
+> ✅ **Stato:** Fase 1 (polling) ✓ · Fase 2 (ETW + **flame graph**) ✓ admin · Fase 4 (**record/diff/export**: `.argus` v2 + JSON, coprono anche disco/memoria/lock) ✓ · Fase 3 (**timeline** + **lock contention** + **memoria** + **disco** con latenza p50/p99) ✓ validati live · overhead misurato **~2%** (caso peggiore). Profiling completo (flame/timeline/disk/memoria) richiede l'esecuzione **come amministratore** (ETW). Il tracking heap a livello `HeapAlloc` è fuori scope (richiederebbe injection/relaunch); VirtualAlloc è l'alternativa fornita. Come si usa: [guida](docs/10-uso.md); dettagli: [roadmap](docs/07-roadmap.md), [decisioni](docs/09-decisions.md), [backlog](docs/11-backlog.md).
 
 ## Cos'è
 
@@ -42,6 +42,8 @@ Tutta la progettazione vive in [`docs/`](docs/) — leggili in ordine se vuoi ca
 7. [Roadmap](docs/07-roadmap.md) — fasi e milestone
 8. [Sviluppo](docs/08-development.md) — workflow di lavoro
 9. [Decisioni](docs/09-decisions.md) — log delle scelte e stato attuale
+10. [Uso](docs/10-uso.md) — **come si usa Argus** (guida pratica)
+11. [Backlog](docs/11-backlog.md) — feature/implementazioni mancanti, prioritizzate
 
 Sviluppatori (umani e AI) che collaborano su Argus devono leggere **`CLAUDE.md`** in radice per le convenzioni.
 

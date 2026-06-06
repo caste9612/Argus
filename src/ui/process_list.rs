@@ -26,7 +26,7 @@ pub fn render(
             ui.heading("Processi");
 
             ui.horizontal(|ui| {
-                ui.label("🔍");
+                ui.label("Cerca");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.search)
                         .hint_text("filtra per nome…")
