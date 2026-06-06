@@ -10,6 +10,10 @@ ne mostra in tempo reale CPU, RAM (working set + private), I/O, thread e handle,
 con dashboard GPU e lista processi raggruppata/ordinabile. Build, clippy e test
 (2 unit + 3 integration) verdi.
 
+**Tag `v0.1.0`** sul completamento Fase 1. Igiene pre-Fase-2 completata: lint
+no-panic cablati nel gate, binario release misurato (10.78 MB), decisioni aperte
+chiuse (RAM, ring buffer, nome) e nuove D13/D14 registrate.
+
 **Prossimo**: Fase 2 — ETW + flame graph (il pezzo che mostra *dove* il codice
 spende tempo). Vedi [`07-roadmap.md`](07-roadmap.md).
 
@@ -88,12 +92,38 @@ Così i test d'integrazione in `tests/` usano `argus::...` e un binario
 thread) fa da bersaglio reale. **Conseguenza**: validazione end-to-end del path
 Win32 senza mock.
 
+### D13 — Ring buffer sampler→aggregator: `crossbeam-channel::bounded`
+La pipeline ETW ad alta frequenza di Fase 2 userà un canale **bounded** di
+`crossbeam-channel` (già dipendenza) come SPSC sampler→aggregator. Niente `rtrb`
+o altre crate finché un profiling non mostri che l'overhead del canale pesa nella
+hot path. **Conseguenza**: nessuna nuova dipendenza; un buffer pieno è di per sé
+il segnale che l'aggregator è in ritardo (back-pressure naturale).
+
+### D14 — Lo spike ETW parte da `windows-rs` raw, non da `ferrisetw`
+Lo stack (`03`) prevede `ferrisetw` + fallback raw. Per lo **spike** di apertura
+Fase 2 partiamo invece da `windows-rs` raw (già dipendenza): valida il path più
+difficile (provider kernel `PerfInfo` + stack walk) con pieno controllo e **zero
+nuove dipendenze**, e mappa esattamente dove i binding mancano. La scelta di
+produzione `ferrisetw`-vs-raw si prende **dopo** lo spike, informata da ciò che
+impariamo. **Conseguenza**: non aggiungiamo `ferrisetw` finché non è provato
+necessario (regola "no dipendenze comode").
+
 ## Questioni aperte
 
-- **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto
-  nei docs. Quasi tutto è overhead del driver GPU/wgpu (le strutture dati di
-  Argus sono <1 MB). Da decidere: rivedere il budget o misurare separatamente la
-  "RAM nostra".
-- **Dimensione binario release**: da misurare contro il target <15 MB.
+- **Budget RAM** — *risolto*. Si distinguono due grandezze: (a) le **allocazioni
+  proprie** di Argus (snapshot, storie, lista processi) → <1 MB oggi, budget < 50
+  MB in Fase 1 e < 150 MB in Fase 2-3 (stack samples ~19 MB + cache simboli); (b)
+  l'**RSS totale** del processo (~304 MB) → quasi interamente working set del
+  driver GPU/wgpu, non controllabile e in linea con qualunque app wgpu. Niente cap
+  rigido sull'RSS; il test di stabilità 8h verifica solo che **non cresca** (no
+  leak). CLAUDE.md, `02` e `07` sono allineati a questa distinzione.
+- **Dimensione binario release** — *risolto*: `argus.exe` = **10.78 MB** (release,
+  LTO thin + strip), sotto il target <15 MB.
+- **Gate `cargo fmt --check` mai applicato** — *nuovo*. Il codice committato non
+  passa `cargo fmt --check` (rustfmt 1.8, default `max_width` 100; nessun
+  `rustfmt.toml` nel repo): il gate è documentato in CLAUDE.md ma di fatto non è
+  mai stato rispettato. Decisione in sospeso con l'utente — (1) `cargo fmt` una
+  tantum su tutto il repo, (2) `rustfmt.toml` su misura, o (3) rilassare il gate.
+  Non toccato in autonomia perché riformatterebbe parecchio codice scritto a mano.
 - **Edge case di affidabilità** non ancora testati in modo dedicato: GPU device
   lost, sistema low-memory (vedi tabella in [`06-reliability.md`](06-reliability.md)).

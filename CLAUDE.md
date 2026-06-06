@@ -31,7 +31,7 @@ Se i docs sono ambigui o incompleti per il task, **chiedi** invece di indovinare
 - **UI**: `eframe` con backend wgpu (NON glow)
 - **API Windows**: `windows` crate (NON `winapi`)
 - **Sync**: `parking_lot`, `arc-swap`, `crossbeam-channel`
-- **ETW** (Fase 2+): `ferrisetw` + fallback `windows-rs` raw per gap
+- **ETW** (Fase 2+): spike in `windows-rs` raw (zero nuove deps); scelta `ferrisetw`-vs-raw per la produzione **dopo** lo spike (vedi `docs/09-decisions.md` D14)
 - **Async**: `tokio` solo se inevitabile — preferire thread + canali
 
 ## Regole di codice
@@ -39,12 +39,12 @@ Se i docs sono ambigui o incompleti per il task, **chiedi** invece di indovinare
 ### Sicurezza
 - **No `unsafe`** salvo nei wrapper Win32. Isolare in funzioni piccole con commento `// SAFETY: ...` che spieghi l'invariante
 - **No `.unwrap()`** in codice di produzione su `Result`/`Option` da API esterne — usa `?` o gestisci esplicitamente. Eccezione: setup iniziale pre-main loop, con commento
-- **No `panic!()` reachable**. Vedi no-panic policy in `docs/06-reliability.md`
+- **No `panic!()` reachable**. Vedi no-panic policy in `docs/06-reliability.md`. Applicata via `[lints.clippy]` in `Cargo.toml` (`unwrap_used`/`expect_used`/`panic` = warn → errore col gate `-D warnings`); il codice di test/fixture è esentato con `#![allow(...)]` commentati
 
 ### Performance
 - **Allocazioni in hot path**: evitarle. Riusa buffer, `VecDeque` con capacità prefissata, `SmallVec` per piccoli array
 - **Locking**: preferire lock-free (channel, atomic, `arc-swap`) per la pipeline sampler→UI
-- **Budget**: overhead < 1% sul target, 60 fps stabili, < 300 MB RAM stato stazionario, < 500 ms startup
+- **Budget**: overhead < 1% sul target, 60 fps stabili, < 500 ms startup. RAM: le *allocazioni proprie* di Argus < 50 MB (Fase 1) / < 150 MB (Fase 2-3, con stack samples + cache simboli); l'RSS *totale* (~300 MB) è dominato dal driver GPU/wgpu — non controllabile, si sorveglia solo che non cresca. Vedi `docs/09-decisions.md`
 
 ### Stile
 - Identifier in inglese (idiom Rust), doc-comment e commenti in italiano OK

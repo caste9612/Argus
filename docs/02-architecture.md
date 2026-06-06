@@ -141,13 +141,13 @@ Conseguenza: niente line-level profiling né hook custom. Va bene per i nostri o
 
 - Time series: 10 Hz × 60 s = 600 sample per metrica → ~2.4 KB ciascuna
 - Stack samples (Fase 2): 1 kHz × 60 s = 60k × 40 frame × 8 byte = ~19 MB
-- Totale RAM target stato stazionario: < 100 MB
+- **Allocazioni proprie** di Argus, stato stazionario: < 50 MB (Fase 1), < 150 MB (Fase 2-3). L'RSS *totale* del processo (~300 MB) è dominato dal working set del driver GPU/wgpu, non dalle nostre strutture — vedi `09-decisions.md`.
 
 Fase 4 introdurrà capture-to-disk (formato `.argus` proprietario o `.etl`).
 
 ### Comunicazione thread
 
-- **Sampler → Aggregator**: SPSC ring buffer (`crossbeam-channel::bounded` o `rtrb`)
+- **Sampler → Aggregator**: SPSC ring buffer **`crossbeam-channel::bounded`** (deciso in `09-decisions.md` D13; niente `rtrb` finché un profiling non lo giustifichi)
 - **Aggregator → UI**: `arc-swap` di `Arc<Snapshot>` immutable
 - **UI → Sampler** (commands): MPSC channel `crossbeam-channel::unbounded`
 

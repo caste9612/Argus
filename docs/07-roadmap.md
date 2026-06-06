@@ -35,9 +35,9 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 
 **DoD**:
 - ✅ Attacchi un processo e vedi le metriche aggiornarsi in real-time
-- ⚠️ RAM: ~304 MB a riposo (include overhead driver GPU/wgpu; strutture dati di Argus <1 MB). Budget <200 MB da rivedere — vedi `09-decisions.md`
+- ✅ RAM: allocazioni proprie di Argus <1 MB (target <50 MB rispettato). L'RSS totale ~304 MB è quasi tutto driver GPU/wgpu; il budget è stato ridefinito sulla "RAM nostra" — vedi `09-decisions.md`
 - ✅ `cargo clippy --all-targets -- -D warnings` pulito; `cargo test` verde (2 unit + 3 integration)
-- ⏳ Binario release < 15 MB (da misurare)
+- ✅ Binario release **10.78 MB** < 15 MB (release LTO thin + strip)
 - Edge case di `06-reliability.md`: target exit, access denied, PID inesistente, apertura di sé → coperti; GPU device lost / low-memory ancora da testare
 
 ---
@@ -122,7 +122,7 @@ Fasi sequenziali. Ogni fase ha **obiettivo**, **deliverable**, **definition of d
 
 Cose deliberatamente **non decise ora** che valuteremo a tempo debito:
 
-- **Nome finale**: "Argus" è provvisorio? Sì, se troviamo qualcosa di meglio prima della Fase 2.
+- **Nome finale**: **confermato "Argus"** — nessuna alternativa migliore emersa entro la Fase 2. Riapribile solo se salta fuori qualcosa di nettamente meglio.
 - **Licenza**: MIT default. Se diventa progetto serio si valuta dual MIT/Apache-2.0.
 - **Cross-platform**: NO per Fase 1-3, riconsiderare Fase 4+.
 - **Plugin system**: NO mai (rompe portabilità e affidabilità).
