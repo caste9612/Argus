@@ -48,99 +48,85 @@ fn dashboard(ui: &mut egui::Ui, snap: &Snapshot, disk: &Mutex<DiskStats>, mem: &
                 ui.add_space(4.0);
             }
 
-            // --- Riga KPI ---
+            // --- Hero CPU + griglia metriche compatte (ognuna con sparkline) ---
+            kpi::hero(
+                ui,
+                "CPU",
+                &format!("{:.1} %", snap.cpu),
+                kpi::cpu_color(snap.cpu),
+                "Tempo CPU (kernel+user) normalizzato su tutte le CPU logiche.",
+                &snap.cpu_hist,
+            );
+            ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
-                kpi::card(
-                    ui,
-                    "CPU",
-                    &format!("{:.1} %", snap.cpu),
-                    kpi::cpu_color(snap.cpu),
-                    "Tempo CPU (kernel+user) normalizzato su tutte le CPU logiche.",
-                );
-                kpi::card(
+                kpi::metric_card(
                     ui,
                     "RAM (working set)",
                     &format!("{:.1} MB", snap.working_set_mb),
                     BLUE,
                     "Memoria fisicamente residente in RAM. Oscillazioni = paging.",
+                    &snap.ws_hist,
                 );
-                kpi::card(
+                kpi::metric_card(
                     ui,
                     "RAM (private)",
                     &format!("{:.1} MB", snap.private_mb),
                     PURPLE,
                     "Memoria committed non condivisa. Crescita monotona = possibile leak.",
+                    &snap.priv_hist,
                 );
-                kpi::card(
+                kpi::metric_card(
                     ui,
                     "Thread",
                     &format!("{}", snap.threads),
                     AMBER,
                     "Numero di thread (campionato 1×/s).",
+                    &snap.thread_hist,
                 );
-                kpi::card(
+                kpi::metric_card(
                     ui,
                     "Handle",
                     &format!("{}", snap.handles),
                     PINK,
                     "Handle kernel aperti. Crescita monotona = handle leak.",
+                    &snap.handle_hist,
                 );
-                kpi::card(
+                kpi::metric_card(
                     ui,
                     "I/O lettura",
                     &format!("{:.2} MB/s", snap.io_read_mb_s),
                     TEAL,
                     "Throughput di lettura (disco + pipe + console).",
+                    &snap.io_r_hist,
                 );
-                kpi::card(
+                kpi::metric_card(
                     ui,
                     "I/O scrittura",
                     &format!("{:.2} MB/s", snap.io_write_mb_s),
                     AMBER,
                     "Throughput di scrittura.",
+                    &snap.io_w_hist,
                 );
             });
 
-            ui.add_space(10.0);
+            ui.add_space(12.0);
 
-            kpi::chart(
-                ui,
-                "CPU  (%)",
-                &snap.cpu_hist,
-                160.0,
-                kpi::cpu_color(snap.cpu),
-                Some(100.0),
-            );
-            ui.add_space(8.0);
-
-            kpi::chart_dual(
-                ui,
-                "Memoria  (MB)",
-                ("working set", &snap.ws_hist, BLUE),
-                ("private", &snap.priv_hist, PURPLE),
-                160.0,
-            );
-            ui.add_space(8.0);
-
-            kpi::chart_dual(
-                ui,
-                "I/O  (MB/s)",
-                ("lettura", &snap.io_r_hist, TEAL),
-                ("scrittura", &snap.io_w_hist, AMBER),
-                140.0,
-            );
-            ui.add_space(8.0);
-
+            // Grafici principali su due colonne (meno scroll, più uso dello spazio).
             ui.columns(2, |cols| {
-                kpi::chart(
+                kpi::chart_dual(
                     &mut cols[0],
-                    "Thread",
-                    &snap.thread_hist,
-                    120.0,
-                    AMBER,
-                    None,
+                    "Memoria  (MB)",
+                    ("working set", &snap.ws_hist, BLUE),
+                    ("private", &snap.priv_hist, PURPLE),
+                    150.0,
                 );
-                kpi::chart(&mut cols[1], "Handle", &snap.handle_hist, 120.0, PINK, None);
+                kpi::chart_dual(
+                    &mut cols[1],
+                    "I/O  (MB/s)",
+                    ("lettura", &snap.io_r_hist, TEAL),
+                    ("scrittura", &snap.io_w_hist, AMBER),
+                    150.0,
+                );
             });
 
             ui.add_space(8.0);
