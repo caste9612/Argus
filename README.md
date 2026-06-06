@@ -19,7 +19,16 @@ L'obiettivo è triplo:
 
 Sviluppatori (Rust / C++ / .NET / Go / …) che vogliono capire cosa sta facendo un loro programma in produzione o in test, **senza dover invocare `perfview` con 17 flag** o leggere stack trace di 200 righe.
 
-## Quick start
+## Download
+
+Scarica l'ultima versione dalla pagina **[Releases](https://github.com/caste9612/Argus/releases)**:
+
+- **`argus-vX.Y.Z-win-x64.zip`** — versione **portatile**: estrai ed esegui `argus.exe`, nessuna installazione (fedele alla filosofia di Argus).
+- Nello zip c'è anche **`Install-Argus.ps1`**: tasto destro → *Esegui con PowerShell* per installare Argus per l'utente corrente (copia in `%LOCALAPPDATA%\Programs\Argus` + collegamento nel menu Start, **senza privilegi admin**).
+
+Requisiti: **Windows 10/11 a 64 bit**. Per il profiling completo (flame graph, timeline, disco, memoria) avvia Argus **come amministratore** (richiesto da ETW).
+
+## Build da sorgente (sviluppatori)
 
 ```powershell
 cargo run --release

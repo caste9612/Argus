@@ -40,6 +40,11 @@ JSON, CI, cargo-deny, tema (D24). **Latenza disco p50/p99** + **formato `.argus`
 **Test totali**: 56 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
 puliti; release ~10.6 MB.
 
+**Rilascio**: **v0.4.0** — prima release pubblica su GitHub (zip portatile +
+`Install-Argus.ps1` per-utente; icona dell'app incorporata nell'exe, D27). Il
+ramo `main` ora riflette l'intero lavoro Fasi 1-4 (riallineato dal branch
+`feat/phase2-etw-flame`).
+
 ## Decisioni
 
 ### D1 — Linguaggio e stack: Rust + windows-rs + wgpu + egui
@@ -316,6 +321,17 @@ Due completamenti di deliverable previsti:
   metriche non è ancora cablato (la UI di replay mostra metriche+flame; i dati
   profondi sono nel file e nel JSON, ma per mostrarli a schermo va ripopolato
   `shared.disk/mem` in replay) — vedi `07-roadmap.md`.
+
+### D27 — Icona dell'app: occhio "all-seeing" generato e incorporato nell'exe
+L'identità visiva è un **occhio** (Argus, il gigante dai cento occhi) con iride
+violetta — la stessa `ACCENT` di `ui/theme.rs` (#7B61FF) su tile scura — dentro
+un reticolo di misura (richiamo al profiling). Sorgente vettoriale in
+`assets/argus.svg`; la `.ico` multi-size (16→256) è generata da quella e
+**incorporata nell'eseguibile** via `build.rs` + `winresource` (build-dependency,
+solo Windows): appare in Explorer, taskbar e finestra. Se manca il resource
+compiler la build **non fallisce** (solo warning), coerente con la degradazione
+con grazia. **Conseguenza**: nessuna dipendenza runtime aggiunta; l'icona vive nel
+sorgente SVG ed è rigenerabile.
 
 ## Questioni aperte
 
