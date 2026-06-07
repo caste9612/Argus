@@ -39,6 +39,7 @@ fn main() -> eframe::Result {
         "flame" => Some(argus::ui::Tab::Flame),
         "timeline" => Some(argus::ui::Tab::Timeline),
         "diff" => Some(argus::ui::Tab::Diff),
+        "guida" | "help" => Some(argus::ui::Tab::Help),
         _ => None,
     });
     if let Some(pid) = initial_pid {

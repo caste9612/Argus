@@ -7,6 +7,7 @@
 mod dashboard;
 mod diff_view;
 mod flame;
+mod help;
 mod kpi;
 mod process_list;
 pub mod theme;
@@ -33,6 +34,7 @@ pub enum Tab {
     Flame,
     Timeline,
     Diff,
+    Help,
 }
 
 /// Criterio di ordinamento secondario della lista processi (il raggruppamento
@@ -82,6 +84,8 @@ pub fn render(
             ui.selectable_value(&mut state.tab, Tab::Flame, "Flame graph");
             ui.selectable_value(&mut state.tab, Tab::Timeline, "Timeline");
             ui.selectable_value(&mut state.tab, Tab::Diff, "Diff");
+            ui.separator();
+            ui.selectable_value(&mut state.tab, Tab::Help, "Guida");
         });
         ui.separator();
         match state.tab {
@@ -95,6 +99,7 @@ pub fn render(
             ),
             Tab::Timeline => timeline_view::render(ui, snap, timeline),
             Tab::Diff => diff_view::render(ui, diff),
+            Tab::Help => help::render(ui),
         }
     });
 }
