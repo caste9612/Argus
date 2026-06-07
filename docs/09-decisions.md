@@ -40,11 +40,12 @@ JSON, CI, cargo-deny, tema (D24). **Latenza disco p50/p99** + **formato `.argus`
 **Test totali**: 56 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
 puliti; release ~10.6 MB.
 
-**Rilascio**: ultima **v0.4.1** su GitHub (icona "cento occhi", dashboard
-ridisegnata, scheda Guida in-app, repaint adattivo — D27/D28/D29; la v0.4.0 fu la
-prima release pubblica). Zip portatile + `Install-Argus.ps1` per-utente. Il ramo
-`main` riflette l'intero lavoro Fasi 1-4 (riallineato dal branch
-`feat/phase2-etw-flame`).
+**Rilascio**: ultima **v0.4.2** su GitHub — guida in-app **approfondita** e **fix
+del leak della timeline** (memoria limitata, trovato col self-profiling, D30), più
+repaint adattivo (D29) e card VirtualAlloc chiarita; sopra la v0.4.1 (icona "cento
+occhi", dashboard ridisegnata, D27/D28) e la v0.4.0 (prima release pubblica). Zip
+portatile + `Install-Argus.ps1` per-utente. Il ramo `main` riflette l'intero
+lavoro Fasi 1-4 (riallineato dal branch `feat/phase2-etw-flame`).
 
 ## Decisioni
 
@@ -352,6 +353,18 @@ attiva (collegata/replay), **400 ms** da ferma/non collegata, **1 s** minimizzat
 fluidità durante il profiling. Trovato col **dogfooding** (Argus che esamina
 Argus); un monitor di ~8 min ha inoltre confermato **nessun leak** di RAM/handle/
 thread in cattura attiva (RAM ~318 MB stabile, dominata dal driver GPU/wgpu).
+
+### D30 — Timeline a memoria limitata (finestra scorrevole + totali cumulativi)
+La timeline teneva **tutti** i segmenti di stato dei thread per l'intera sessione
+(`HashMap<tid, Vec<Segment>>`): su un target attivo (molti context switch) la RAM
+cresceva **senza limite** → leak su catture lunghe. **Trovato col dogfooding**:
+Argus che monitorava Argus ha mostrato la sua RAM salire in modo lineare durante
+la cattura (~+0,24 MB/s). Fix: i segmenti sono ora una **finestra scorrevole**
+(`MAX_SEGS_PER_THREAD`, i più vecchi potati — il Gantt mostra comunque la parte
+recente) e gli aggregati (tempo per stato, attese per causa) sono **contatori
+cumulativi** aggiornati a ogni segmento → metriche esatte, memoria limitata.
+**Conseguenza**: catture lunghe stabili; e il self-profiling (Argus su Argus) si
+conferma un vero strumento di QA — ha trovato un bug che i test non vedevano.
 
 ## Questioni aperte
 
