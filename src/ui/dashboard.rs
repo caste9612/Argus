@@ -190,12 +190,14 @@ fn mem_section(ui: &mut egui::Ui, mem: &Mutex<MemStats>) {
             );
             kpi::card(
                 &mut cols[1],
-                "VirtualAlloc",
+                "VirtualAlloc (cumulato)",
                 &format!("{:.1} MB", mb(m.valloc_bytes)),
                 PURPLE,
                 &format!(
-                    "{} riserve/commit di memoria virtuale (granularità di pagina, \
-                     non HeapAlloc).",
+                    "{} riserve di memoria virtuale, TOTALE dall'inizio cattura \
+                     (granularità di pagina, non HeapAlloc). È un contatore cumulativo: \
+                     cresce sempre per un programma attivo, NON è di per sé un leak — \
+                     il leak si legge nel 'Saldo netto' (alloc − free) qui a fianco.",
                     m.valloc_count
                 ),
             );

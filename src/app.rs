@@ -95,7 +95,7 @@ impl eframe::App for ArgusApp {
         let next = if minimized {
             Duration::from_secs(1)
         } else if active {
-            Duration::from_millis(33) // collegato/replay: grafici live fluidi
+            Duration::from_millis(50) // collegato/replay: ~20 fps (dati a 10 Hz; l'input forza comunque un repaint immediato)
         } else {
             Duration::from_millis(400) // non collegato / target uscito: risparmio
         };
