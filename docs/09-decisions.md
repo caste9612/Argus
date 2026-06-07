@@ -40,9 +40,10 @@ JSON, CI, cargo-deny, tema (D24). **Latenza disco p50/p99** + **formato `.argus`
 **Test totali**: 56 unit + 3 integration + 2 ignored (admin) verdi; clippy/fmt
 puliti; release ~10.6 MB.
 
-**Rilascio**: **v0.4.0** — prima release pubblica su GitHub (zip portatile +
-`Install-Argus.ps1` per-utente; icona dell'app incorporata nell'exe, D27). Il
-ramo `main` ora riflette l'intero lavoro Fasi 1-4 (riallineato dal branch
+**Rilascio**: ultima **v0.4.1** su GitHub (icona "cento occhi", dashboard
+ridisegnata, scheda Guida in-app, repaint adattivo — D27/D28/D29; la v0.4.0 fu la
+prima release pubblica). Zip portatile + `Install-Argus.ps1` per-utente. Il ramo
+`main` riflette l'intero lavoro Fasi 1-4 (riallineato dal branch
 `feat/phase2-etw-flame`).
 
 ## Decisioni
