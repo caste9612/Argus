@@ -83,13 +83,21 @@ impl eframe::App for ArgusApp {
             }
         }
 
-        // Il dato si aggiorna a 10 Hz: ~30 fps di rendering sono fluidi e
-        // risparmiano energia. Quando la finestra è minimizzata rallentiamo.
+        // Cadenza di repaint adattiva: non sprecare CPU/GPU quando non c'è nulla
+        // da aggiornare. I dati arrivano a ≤10 Hz e ogni input forza comunque un
+        // repaint immediato (egui), quindi 30 fps continui a riposo erano solo
+        // consumo. Attivo → fluido; fermo → rallenta; minimizzato → quasi nulla.
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        let active = matches!(
+            snap.status,
+            crate::aggregation::Status::Running | crate::aggregation::Status::Replay(_)
+        );
         let next = if minimized {
-            Duration::from_millis(500)
+            Duration::from_secs(1)
+        } else if active {
+            Duration::from_millis(33) // collegato/replay: grafici live fluidi
         } else {
-            Duration::from_millis(33)
+            Duration::from_millis(400) // non collegato / target uscito: risparmio
         };
         ctx.request_repaint_after(next);
     }
