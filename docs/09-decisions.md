@@ -333,6 +333,25 @@ compiler la build **non fallisce** (solo warning), coerente con la degradazione
 con grazia. **Conseguenza**: nessuna dipendenza runtime aggiunta; l'icona vive nel
 sorgente SVG ed è rigenerabile.
 
+### D28 — Dashboard ridisegnata: hero CPU, sparkline, grafici ad area, griglia responsive
+La pagina Metriche è stata rifatta per dare gerarchia e leggibilità
+(`05-ui-design`): card **hero** per la CPU (valore grande + sparkline ampia), card
+compatte con **mini-sparkline** del trend, grafici ad **area** su due colonne con
+valore corrente e tooltip su hover. Le card stanno in una **griglia responsive**
+(numero di colonne in base alla larghezza, righe bilanciate 6/3/2/1) che riempie
+lo spazio invece di lasciarlo morto; anche le sezioni Disco/Memoria (ETW) usano
+colonne uniformi. **Conseguenza**: si capisce a colpo d'occhio, **nessuna nuova
+dipendenza** (sparkline disegnata col painter, area con `egui_plot`).
+
+### D29 — Repaint adattivo (meno CPU/GPU a riposo)
+La UI ridisegnava a 30 fps fissi *sempre*, anche da ferma, pur con dati a ≤10 Hz e
+repaint immediato su input: spreco. Ora la cadenza è adattiva — **33 ms** se
+attiva (collegata/replay), **400 ms** da ferma/non collegata, **1 s** minimizzata.
+**Conseguenza**: meno CPU/GPU quando Argus sta in background, senza perdere
+fluidità durante il profiling. Trovato col **dogfooding** (Argus che esamina
+Argus); un monitor di ~8 min ha inoltre confermato **nessun leak** di RAM/handle/
+thread in cattura attiva (RAM ~318 MB stabile, dominata dal driver GPU/wgpu).
+
 ## Questioni aperte
 
 - **Budget RAM**: a riposo Argus usa ~304 MB, sopra il target di 300 MB scritto

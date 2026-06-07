@@ -58,6 +58,49 @@ Da riga di comando puoi collegarti subito: `argus.exe --attach <PID>`
   sovrapposti (A grigio = baseline, B blu = corrente) e le funzioni che cambiano
   di più (movers).
 
+## Come interpretare i dati (diagnosi)
+
+Argus serve a capire *perché* un programma si comporta così. Schemi tipici:
+
+**È lento — dove va il tempo?**
+- **CPU alta (vicina al 100% su uno o più core) + I/O bassa + poche attese** →
+  *compute-bound*: il collo di bottiglia è il calcolo. Vai sul **Flame graph**: la
+  barra più larga è la funzione che mangia CPU — ottimizza lì.
+- **CPU bassa ma il programma è lento** → non sta calcolando, sta **aspettando**.
+  Vai sulla **Timeline** e guarda la riga "Attese per causa":
+  - tanto **Lock** → contesa di sincronizzazione (thread che si bloccano a
+    vicenda) → riduci la sezione critica o ripensa il locking;
+  - tanto **I/O** → aspetta disco/rete → il problema è l'I/O, non la CPU.
+
+**Usa troppa memoria / perde memoria?**
+- **Private bytes che crescono in modo monotono** (non scendono mai) → forte
+  sospetto di **memory leak**. Un programma sano oscilla attorno a un valore.
+- **Hard page fault alti** (sezione Memoria, ETW) → il working set non sta in RAM:
+  il sistema pagina da disco → rallentamenti a scatti.
+- **VirtualAlloc / saldo netto** in salita continua → riserve di memoria virtuale
+  crescenti (possibile crescita o leak a livello di pagine).
+
+**Perde risorse (handle)?**
+- **Handle in crescita monotona** → file/socket/oggetti kernel non chiusi (handle
+  leak). Un valore stabile e oscillante è sano.
+
+**Il disco è il collo di bottiglia?**
+- Sezione Disco (ETW): **latenza p99 molto più alta della mediana** → code di I/O
+  occasionali (disco sotto pressione).
+
+**Leggere il flame graph**
+- Le barre sono larghe in proporzione al tempo CPU: cerca la funzione **larga e
+  inaspettata**, spesso è lì l'ottimizzazione. **Self** = tempo nella funzione
+  stessa; **totale** = lei più i suoi figli. La ricerca (regex) evidenzia un
+  modulo/funzione.
+
+**Provare un'ottimizzazione (Diff)**
+- Salva una sessione *prima*, ottimizza, ricollega e **Confronta**: i *movers*
+  mostrano quali funzioni sono cambiate di più — la prova che ha funzionato.
+
+> Regola d'oro: prima **misura**, poi ottimizza. Argus serve proprio a misurare
+> "con gli occhi".
+
 ## Registrare, riaprire, confrontare, esportare
 
 Nella barra in alto (attivi quando c'è una sessione):
