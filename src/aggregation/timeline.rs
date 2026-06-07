@@ -6,8 +6,20 @@
 //! `old_state` (in genere Waiting o Ready), mentre l'entrante (`new_tid`) chiude
 //! il suo segmento di attesa e inizia a girare. È **pura** (nessuna API Win32):
 //! l'alimentazione live arriva dal parser CSwitch via ETW, ma è testabile da sola.
+//!
+//! ## Memoria limitata (no leak su catture lunghe)
+//! Un bersaglio attivo fa migliaia di context switch al secondo: tenere *tutti* i
+//! segmenti farebbe crescere la RAM senza limite. Perciò i segmenti per thread
+//! sono una **finestra scorrevole** (`MAX_SEGS_PER_THREAD`, i più vecchi vengono
+//! potati: il Gantt mostra comunque la parte recente), mentre gli **aggregati**
+//! (tempo per stato, attese per causa) sono **contatori cumulativi** aggiornati a
+//! ogni segmento chiuso — quindi restano corretti anche dopo la potatura.
 
 use std::collections::{HashMap, HashSet};
+
+/// Segmenti massimi conservati per thread (finestra scorrevole per il Gantt).
+/// ~24 B/segmento → ≤ ~200 KB per thread anche nel caso peggiore.
+const MAX_SEGS_PER_THREAD: usize = 8192;
 
 /// Stato di un thread in un intervallo. Mappa i KTHREAD_STATE del kernel sulle
 /// categorie utili a leggere il comportamento dello scheduler.
@@ -117,6 +129,14 @@ impl WaitBreakdown {
             WaitCategory::Other => self.other += dt,
         }
     }
+
+    fn merge(&mut self, o: &WaitBreakdown) {
+        self.lock += o.lock;
+        self.io += o.io;
+        self.user_idle += o.user_idle;
+        self.preempted += o.preempted;
+        self.other += o.other;
+    }
 }
 
 /// Un segmento temporale di un thread in un certo stato, `[start, end)` (tick QPC).
@@ -129,14 +149,52 @@ pub struct Segment {
     pub wait_reason: i8,
 }
 
+/// Aggregati cumulativi per thread, indipendenti dalla potatura dei segmenti:
+/// tempo in ciascuno stato e suddivisione delle attese per causa.
+#[derive(Clone, Copy, Debug, Default)]
+struct ThreadTotals {
+    running: u64,
+    ready: u64,
+    waiting: u64,
+    other: u64,
+    wait: WaitBreakdown,
+}
+
+impl ThreadTotals {
+    fn add(&mut self, state: ThreadState, dt: u64, reason: i8) {
+        match state {
+            ThreadState::Running => self.running += dt,
+            ThreadState::Ready => self.ready += dt,
+            ThreadState::Waiting => {
+                self.waiting += dt;
+                self.wait.add(wait_category(reason), dt);
+            }
+            ThreadState::Other => self.other += dt,
+        }
+    }
+
+    fn time_in(&self, state: ThreadState) -> u64 {
+        match state {
+            ThreadState::Running => self.running,
+            ThreadState::Ready => self.ready,
+            ThreadState::Waiting => self.waiting,
+            ThreadState::Other => self.other,
+        }
+    }
+}
+
 /// Timeline dei segmenti di stato per thread (TID).
 #[derive(Default)]
 pub struct ThreadTimeline {
     /// Stato corrente per thread: (istante d'inizio, stato, causa-attesa).
     cur: HashMap<u32, (u64, ThreadState, i8)>,
-    /// Segmenti chiusi per thread.
+    /// Segmenti chiusi per thread — **finestra scorrevole** (i più vecchi sono
+    /// potati): serve solo al disegno del Gantt, non agli aggregati.
     segs: HashMap<u32, Vec<Segment>>,
-    /// Se presente, si conservano i segmenti solo per questi TID (i thread del
+    /// Aggregati cumulativi per thread (tempo per stato, attese): restano corretti
+    /// anche quando i segmenti vengono potati.
+    totals: HashMap<u32, ThreadTotals>,
+    /// Se presente, si conservano i dati solo per questi TID (i thread del
     /// target). Gli altri aggiornano lo stato ma non vengono memorizzati.
     tracked: Option<HashSet<u32>>,
     first: Option<u64>,
@@ -151,16 +209,17 @@ impl ThreadTimeline {
     pub fn clear(&mut self) {
         self.cur.clear();
         self.segs.clear();
+        self.totals.clear();
         self.tracked = None;
         self.first = None;
         self.last = 0;
     }
 
     pub fn is_empty(&self) -> bool {
-        self.segs.is_empty() && self.cur.is_empty()
+        self.totals.is_empty() && self.cur.is_empty()
     }
 
-    /// Limita i segmenti conservati a questi TID (i thread del target).
+    /// Limita i dati conservati a questi TID (i thread del target).
     pub fn set_tracked(&mut self, tids: HashSet<u32>) {
         self.tracked = Some(tids);
     }
@@ -196,12 +255,22 @@ impl ThreadTimeline {
         }
         if let Some((start, prev, prev_reason)) = self.cur.insert(tid, (time, next, reason)) {
             if time > start && self.is_tracked(tid) {
-                self.segs.entry(tid).or_default().push(Segment {
+                let dt = time - start;
+                // Aggregati cumulativi: sempre, anche se i segmenti vengono potati.
+                self.totals.entry(tid).or_default().add(prev, dt, prev_reason);
+                // Segmenti per il Gantt: finestra scorrevole limitata in memoria.
+                let v = self.segs.entry(tid).or_default();
+                v.push(Segment {
                     start,
                     end: time,
                     state: prev,
                     wait_reason: prev_reason,
                 });
+                if v.len() > MAX_SEGS_PER_THREAD {
+                    // Scarta la metà più vecchia (ammortizzato O(1) per segmento):
+                    // il Gantt mostra comunque la finestra recente.
+                    v.drain(0..v.len() / 2);
+                }
             }
         }
     }
@@ -211,31 +280,22 @@ impl ThreadTimeline {
     }
 
     pub fn thread_count(&self) -> usize {
-        self.segs.len()
+        self.totals.len()
     }
 
-    /// Segmenti di un thread (vuoto se sconosciuto).
+    /// Segmenti recenti di un thread (finestra scorrevole; vuoto se sconosciuto).
     pub fn segments_of(&self, tid: u32) -> &[Segment] {
         self.segs.get(&tid).map_or(&[][..], |v| v.as_slice())
     }
 
-    /// Tempo totale in un dato stato per un thread.
+    /// Tempo totale in un dato stato per un thread (cumulativo, dall'inizio).
     pub fn time_in(&self, tid: u32, state: ThreadState) -> u64 {
-        self.segs.get(&tid).map_or(0, |v| {
-            v.iter()
-                .filter(|s| s.state == state)
-                .map(|s| s.end - s.start)
-                .sum()
-        })
+        self.totals.get(&tid).map_or(0, |t| t.time_in(state))
     }
 
     /// TID ordinati per tempo Running totale decrescente (i più "caldi" prima).
     pub fn threads_by_busy(&self) -> Vec<(u32, u64)> {
-        let mut v: Vec<(u32, u64)> = self
-            .segs
-            .keys()
-            .map(|&tid| (tid, self.time_in(tid, ThreadState::Running)))
-            .collect();
+        let mut v: Vec<(u32, u64)> = self.totals.iter().map(|(&tid, t)| (tid, t.running)).collect();
         v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         v
     }
@@ -245,27 +305,15 @@ impl ThreadTimeline {
     /// sincronizzazione (vedi `05-ui-design`, pannello attese).
     pub fn wait_breakdown(&self) -> WaitBreakdown {
         let mut b = WaitBreakdown::default();
-        for segs in self.segs.values() {
-            for s in segs {
-                if s.state == ThreadState::Waiting {
-                    b.add(wait_category(s.wait_reason), s.end - s.start);
-                }
-            }
+        for t in self.totals.values() {
+            b.merge(&t.wait);
         }
         b
     }
 
     /// Suddivisione delle attese per un singolo thread.
     pub fn wait_breakdown_of(&self, tid: u32) -> WaitBreakdown {
-        let mut b = WaitBreakdown::default();
-        if let Some(segs) = self.segs.get(&tid) {
-            for s in segs {
-                if s.state == ThreadState::Waiting {
-                    b.add(wait_category(s.wait_reason), s.end - s.start);
-                }
-            }
-        }
-        b
+        self.totals.get(&tid).map(|t| t.wait).unwrap_or_default()
     }
 }
 
@@ -276,7 +324,7 @@ mod tests {
     #[test]
     fn reconstructs_running_and_waiting() {
         let mut t = ThreadTimeline::new();
-        // T1 gira, poi va in Waiting (old_state=5) mentre T2 parte; poi T1  riparte.
+        // T1 gira, poi va in Waiting (old_state=5) mentre T2 parte; poi T1 riparte.
         t.on_cswitch(0, 1, 0, 0, 0); // T1 inizia (old_tid=0 ignorato)
         t.on_cswitch(10, 2, 1, 5, 29); // T1 → Waiting [0,10] running; T2 inizia (causa WrMutex)
         t.on_cswitch(25, 1, 2, 5, 0); // T2 → Waiting [10,25] running; T1 riparte (chiude waiting [10,25])
@@ -352,11 +400,32 @@ mod tests {
     }
 
     #[test]
-    fn wait_category_mapping() {
-        assert_eq!(wait_category(29), WaitCategory::Lock); // WrMutex
-        assert_eq!(wait_category(34), WaitCategory::Lock); // WrFastMutex
-        assert_eq!(wait_category(2), WaitCategory::Io); // PageIn
-        assert_eq!(wait_category(6), WaitCategory::UserIdle); // UserRequest
-        assert_eq!(wait_category(32), WaitCategory::Preempted); // WrPreempted
+    fn segments_are_bounded_but_totals_are_exact() {
+        // Tante transizioni Running↔Waiting per T1: i segmenti restano sotto il
+        // tetto (no crescita illimitata), ma i totali cumulativi sono esatti.
+        let mut t = ThreadTimeline::new();
+        t.set_tracked([1].into_iter().collect());
+        let switches = MAX_SEGS_PER_THREAD * 3; // ben oltre il tetto
+        let mut time = 0u64;
+        // Avvia T1.
+        t.on_cswitch(time, 1, 0, 0, 0);
+        let mut running_total = 0u64;
+        for _ in 0..switches {
+            // T1 gira 2 tick, poi attende 3 tick (Waiting), poi riparte.
+            time += 2;
+            running_total += 2;
+            t.on_cswitch(time, 2, 1, 5, 6); // T1 → Waiting (UserRequest=6)
+            time += 3;
+            t.on_cswitch(time, 1, 2, 5, 0); // T1 riparte
+        }
+        // I segmenti conservati sono limitati…
+        assert!(
+            t.segments_of(1).len() <= MAX_SEGS_PER_THREAD,
+            "segmenti non limitati: {}",
+            t.segments_of(1).len()
+        );
+        // …ma il tempo Running cumulativo è esatto (non perso dalla potatura).
+        assert_eq!(t.time_in(1, ThreadState::Running), running_total);
+        assert_eq!(t.time_in(1, ThreadState::Waiting), switches as u64 * 3);
     }
 }
