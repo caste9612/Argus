@@ -1,95 +1,73 @@
 # Argus
 
-**Profiler portatile e didattico per Windows.**
-Attàccati a un programma in esecuzione e *guarda* — e impara a capire — come usa CPU, memoria, I/O, thread e lock.
+**An educational profiler for Windows.**
 
-> ✅ **Stato:** Fasi 1-4 complete (validate live, da amministratore): metriche real-time, **flame graph** (ETW), **timeline** dei thread + **lock contention**, **memoria** (hard page fault / VirtualAlloc) e **disco** con latenze p50/p99, **registrazione/replay** `.argus`, **diff** tra sessioni ed **export** CSV/SVG/JSON. Overhead misurato **~2%**. Il profiling completo (flame/timeline/disco/memoria) **richiede l'avvio come amministratore** (ETW). Come si usa: scheda **Guida** nell'app o [`docs/10-uso.md`](docs/10-uso.md); dettagli in [roadmap](docs/07-roadmap.md), [decisioni](docs/09-decisions.md), [backlog](docs/11-backlog.md).
+[![Latest release](https://img.shields.io/github/v/release/caste9612/Argus?style=flat-square&color=b388ff)](https://github.com/caste9612/Argus/releases/latest)
+![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%2F11-4c8dff?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-7c5cff?style=flat-square)](LICENSE)
 
-## Perché Argus
+Profiling tools show plenty of numbers but don't explain what they mean, and finding out why a program was
+slow took time and several tools. Argus attaches to a program that is already running, without modifying it
+(no injection, no hooks), and shows its CPU, memory, I/O, threads and locks, with an explanation for every
+metric and a guide to finding the bottleneck.
 
-Quasi tutti gli strumenti ti *mostrano* dei numeri. Argus vuole anche **insegnarti a leggerli**: capire *perché* un programma è lento, *dove* spende il tempo, se perde memoria, se litiga sui lock. Si attacca a un processo **già in esecuzione, senza modificarlo** (niente injection, niente hook) e mostra tutto in tempo reale con una dashboard GPU che regge milioni di sample senza scatti.
-
-È nato con uno **scopo didattico**: non solo vedere CPU/RAM/I/O, ma capire *come si comporta* un software sotto il cofano. Per questo ogni metrica ha un **tooltip** che spiega cosa misura e cosa indica un valore anomalo, e dentro l'app c'è una scheda **Guida** che spiega come usarla e come interpretare i dati.
-
-## Cosa puoi imparare
-
-- **Dove va il tempo (CPU-bound)** — il *flame graph* mostra le funzioni che consumano CPU: barra larga = tanto tempo. Trovi l'hot path senza leggere stack trace a mano.
-- **Aspetta o calcola? (I/O / lock-bound)** — la *timeline* dei thread distingue **Running / Ready / Waiting**; se un thread resta in attesa su un **lock**, lo vedi (contesa) e capisci che il collo di bottiglia non è la CPU.
-- **Memory leak** — i *private bytes* che crescono in modo monotono = memoria che non viene mai rilasciata.
-- **Paging** — molti *hard page fault* = il working set non entra in RAM e il sistema pagina da disco → rallentamenti improvvisi.
-- **Leak di risorse** — *handle* che salgono senza mai scendere = handle (file, socket, …) non chiusi.
-- **Disco sotto pressione** — latenza **p99** molto più alta della mediana = code di I/O occasionali.
-
-> In breve: Argus trasforma concetti astratti ("è lento", "consuma troppo") in qualcosa che **vedi e sai spiegare**.
-
-## Obiettivi (non negoziabili)
-
-- **Portatile** — un singolo `.exe`, niente runtime, niente installazione obbligatoria
-- **Affidabile** — niente crash, niente panic, degrado graduale se mancano permessi o dati
-- **Leggibile** — grafica curata, dati comprensibili a colpo d'occhio
-- **Didattico** — non solo numeri: ti aiuta a *capirli*
-
-## Per chi è
-
-Sviluppatori (Rust / C++ / .NET / Go / …) e curiosi che vogliono capire cosa sta facendo un loro programma in produzione o in test — **senza invocare `perfview` con 17 flag** né leggere stack trace di 200 righe.
+![Argus attached to a demo program: CPU, memory, threads, handles and I/O with their graphs, disk latency and page faults](docs/screenshots/metrics.webp)
 
 ## Download
 
-Scarica l'ultima versione dalla pagina **[Releases](https://github.com/caste9612/Argus/releases)**:
+Download `argus-vX.Y.Z-win-x64.zip` from the [latest release](https://github.com/caste9612/Argus/releases/latest),
+extract it and run `argus.exe`: it is a single portable executable. The zip also contains
+`Install-Argus.ps1`, which installs Argus for the current user (`%LOCALAPPDATA%\Programs\Argus` and a Start
+menu shortcut) without administrator rights.
 
-- **`argus-vX.Y.Z-win-x64.zip`** — versione **portatile**: estrai ed esegui `argus.exe`, nessuna installazione (fedele alla filosofia di Argus).
-- Nello zip c'è anche **`Install-Argus.ps1`**: tasto destro → *Esegui con PowerShell* per installare Argus per l'utente corrente (copia in `%LOCALAPPDATA%\Programs\Argus` + collegamento nel menu Start, **senza privilegi admin**).
+- **Windows 10 or 11**, 64-bit.
+- The flame graph, the thread timeline, disk and memory come from ETW and need Argus to **run as
+  administrator**; CPU, memory, I/O, threads and handles work without it.
+- The interface is in Italian.
 
-Requisiti: **Windows 10/11 a 64 bit**. Per il profiling completo (flame graph, timeline, disco, memoria) avvia Argus **come amministratore** (richiesto da ETW); le metriche base (CPU/RAM/I/O/thread/handle) funzionano anche senza.
+## What it shows
 
-## Come si usa (in breve)
+- **Metrics**: CPU, working set and private memory, I/O, threads and handles, each with a graph and a tooltip
+  that explains what it measures and what an unusual value means.
+- **Flame graph**: where the process spends CPU time, from ETW samples, with zoom and regex search.
+- **Thread timeline**: thread states over time (running, ready, waiting) and what each thread waits for:
+  locks, I/O or nothing.
+- **Memory and disk**: hard page faults and allocations; disk operations with median and p99 latency.
+- **Sessions**: recordings saved as `.argus` files, to replay later or compare before and after a change
+  (**Diff**), and export to CSV, SVG (the flame graph) or JSON.
+- **Guide**: a tab that explains how to read the data and how to look for a bottleneck.
 
-1. Avvia Argus — **come amministratore** per sbloccare flame graph, timeline, disco e memoria (ETW).
-2. Scegli un processo nella lista a sinistra → **Collega** (o doppio click).
-3. Esplora le schede:
-   - **Metriche** — CPU, RAM (working set + private), I/O, thread, handle in tempo reale, ognuno con sparkline e tooltip.
-   - **Flame graph** — dove il processo spende tempo CPU (zoom, ricerca regex).
-   - **Timeline** — stati dei thread nel tempo e attese per causa (lock/IO/idle).
-   - **Diff** — confronta due sessioni (prima/dopo un'ottimizzazione).
-4. **Salva** la sessione in un file `.argus`, riaprila in *replay*, **confrontala** o **esporta** (CSV / SVG del flame / JSON completo).
+![The flame graph of a demo program: the worker threads and the functions that use the CPU](docs/screenshots/flame.webp)
 
-Guida completa e interpretazione dei dati: scheda **Guida** nell'app, oppure [`docs/10-uso.md`](docs/10-uso.md).
+What the numbers can tell you:
 
-## Build da sorgente
+- **Where the time goes**: a wide bar in the flame graph is a function that takes a lot of CPU.
+- **Waiting or computing**: threads that stay *waiting* on a lock in the timeline mean the bottleneck is
+  not the CPU.
+- **A memory leak**: private bytes that only grow.
+- **Paging**: many hard page faults, when the working set doesn't fit in RAM.
+- **A handle leak**: handles that go up and never come down.
+- **A disk under pressure**: a p99 latency much higher than the median.
+
+![The built-in guide on how to read the metrics and find a bottleneck](docs/screenshots/guide.webp)
+
+Argus's own overhead, measured, is about 2%. The step-by-step guide is in the app and in
+[docs/10-uso.md](docs/10-uso.md).
+
+## Build from source
 
 ```powershell
-cargo run --release        # build ottimizzato ed esegui
-cargo test                 # unit + integration
+cargo run --release --bin argus   # optimized build, then run
+cargo test                        # unit and integration tests
 cargo clippy --all-targets -- -D warnings
 ```
 
-## Documentazione
+Rust 1.92 or later. The repository also builds `fixture`, a small program to profile while testing.
 
-La progettazione vive in [`docs/`](docs/) — leggi in ordine per capire il progetto:
+The design documents are in [docs/](docs/), in Italian: vision, architecture, tech stack, metrics, UI,
+reliability, roadmap, development, decisions, usage and backlog. Built with Rust, windows-rs (Win32 and ETW),
+wgpu and egui.
 
-1. [Visione](docs/01-vision.md) — problema, obiettivi, principi
-2. [Architettura](docs/02-architecture.md) — com'è strutturato il sistema
-3. [Tech stack](docs/03-tech-stack.md) — le scelte tecnologiche e perché
-4. [Metriche](docs/04-metrics.md) — cosa misuriamo, da dove, **cosa insegna**
-5. [UI design](docs/05-ui-design.md) — linguaggio visivo
-6. [Affidabilità](docs/06-reliability.md) — garanzie e strategie
-7. [Roadmap](docs/07-roadmap.md) — fasi e milestone
-8. [Sviluppo](docs/08-development.md) — workflow di lavoro
-9. [Decisioni](docs/09-decisions.md) — log delle scelte e stato attuale
-10. [Uso](docs/10-uso.md) — **come si usa Argus e come leggere i dati**
-11. [Backlog](docs/11-backlog.md) — feature/implementazioni mancanti
+## License
 
-Chi collabora (umani e AI) legga **`CLAUDE.md`** in radice per le convenzioni.
-
-## Stack tecnologico
-
-- **Rust** 1.92+ — no GC, no runtime, binario singolo
-- **windows-rs** — API Win32 native + ETW (Event Tracing for Windows)
-- **wgpu** — rendering GPU moderno (backend auto-selezionato: Vulkan/DX12)
-- **egui / eframe** — UI immediate-mode
-
-Dettagli e alternative scartate: [docs/03-tech-stack.md](docs/03-tech-stack.md).
-
-## Licenza
-
-MIT — vedi [LICENSE](LICENSE).
+[MIT](LICENSE)
